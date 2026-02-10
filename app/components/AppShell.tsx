@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
@@ -14,6 +14,15 @@ import type {
   SearchItem,
   TradeTiming
 } from '../../lib/types';
+import {
+  getFundFeeRateClient,
+  getFundHistoryClient,
+  getFundHistoryTableClient,
+  getFundPerformanceClient,
+  getFundPositionsClient,
+  getFundSummaryClient,
+  searchFundsClient
+} from '../../lib/client-fund';
 import { classByValue, containsCjk, formatMoney, formatMoneyWithSymbol, formatPct, normalizeCode, toNumber } from '../../lib/utils';
 import { computeCostUnit, computeHoldingView, computeMetrics, resolveDailyPct } from '../../lib/metrics';
 import { detectFundFromText, parseBatchText } from '../../lib/ocr';
@@ -141,6 +150,23 @@ function createOperationId() {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+function ensureFundEntry(cache: Record<string, FundData>, code: string): FundData {
+  return (
+    cache[code] ?? {
+      code,
+      name: code,
+      history: [],
+      metrics: null,
+      latestNav: null,
+      latestDate: '',
+      estNav: null,
+      estPct: null,
+      updateTime: '',
+      feeRate: null
+    }
+  );
 }
 
 export default function AppShell() {
@@ -425,7 +451,7 @@ export default function AppShell() {
         const next = prev.map((op) => {
           if (op.status === 'pending' && now >= op.applyAt) {
             changed = true;
-            return { ...op, status: 'confirmed' };
+            return { ...op, status: 'confirmed' as FundOperation['status'] };
           }
           return op;
         });
@@ -454,9 +480,15 @@ export default function AppShell() {
         if (fromCache !== null) return fromCache;
 
         const fetchPage = async (page: number) => {
-          const res = await fetch(`/api/fund/${code}/history-table?page=${page}`);
-          if (!res.ok) return null;
-          const data = await res.json();
+          let data: FundHistoryTableData | null = null;
+          if (USE_DIRECT_API) {
+            data = await getFundHistoryTableClient(code, page);
+          } else {
+            const res = await fetch(`/api/fund/${code}/history-table?page=${page}`);
+            if (!res.ok) return null;
+            data = await res.json();
+          }
+          if (!data) return null;
           setHistoryTableCache((prev) => {
             const next = { ...prev, [`${code}_${page}`]: data };
             historyCacheRef.current = next;
@@ -755,36 +787,63 @@ export default function AppShell() {
     const normalized = normalizeCode(code);
     if (!normalized) return null;
 
-    const [summaryRes, historyRes] = await Promise.allSettled([
-      fetch(`/api/fund/${normalized}`),
-      fetch(`/api/fund/${normalized}/values?days=365`)
-    ]);
+    try {
+      if (USE_DIRECT_API) {
+        const [summaryRes, historyRes] = await Promise.allSettled([
+          getFundSummaryClient(normalized),
+          getFundHistoryClient(normalized, 365)
+        ]);
+        const summary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+        const historyData = historyRes.status === 'fulfilled' ? historyRes.value : null;
+        const history = Array.isArray(historyData?.history) ? historyData.history : [];
+        const metrics = computeMetrics(history);
+        return {
+          code: normalized,
+          name: summary?.name || historyData?.name || normalized,
+          history,
+          metrics,
+          latestNav: summary?.latestNav ?? null,
+          latestDate: summary?.latestDate || '',
+          estNav: summary?.estNav ?? null,
+          estPct: summary?.estPct ?? null,
+          updateTime: summary?.updateTime || '',
+          feeRate: summary?.feeRate ?? null
+        } as FundData;
+      }
 
-    let summary: any = null;
-    if (summaryRes.status === 'fulfilled' && summaryRes.value.ok) {
-      summary = await summaryRes.value.json();
+      const [summaryRes, historyRes] = await Promise.allSettled([
+        fetch(`/api/fund/${normalized}`),
+        fetch(`/api/fund/${normalized}/values?days=365`)
+      ]);
+
+      let summary: any = null;
+      if (summaryRes.status === 'fulfilled' && summaryRes.value.ok) {
+        summary = await summaryRes.value.json();
+      }
+
+      let historyData: any = null;
+      if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
+        historyData = await historyRes.value.json();
+      }
+
+      const history = Array.isArray(historyData?.history) ? historyData.history : [];
+      const metrics = computeMetrics(history);
+
+      return {
+        code: normalized,
+        name: summary?.name || historyData?.name || normalized,
+        history,
+        metrics,
+        latestNav: summary?.latestNav ?? null,
+        latestDate: summary?.latestDate || '',
+        estNav: summary?.estNav ?? null,
+        estPct: summary?.estPct ?? null,
+        updateTime: summary?.updateTime || '',
+        feeRate: summary?.feeRate ?? null
+      } as FundData;
+    } catch {
+      return null;
     }
-
-    let historyData: any = null;
-    if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
-      historyData = await historyRes.value.json();
-    }
-
-    const history = Array.isArray(historyData?.history) ? historyData.history : [];
-    const metrics = computeMetrics(history);
-
-    return {
-      code: normalized,
-      name: summary?.name || historyData?.name || normalized,
-      history,
-      metrics,
-      latestNav: summary?.latestNav ?? null,
-      latestDate: summary?.latestDate || '',
-      estNav: summary?.estNav ?? null,
-      estPct: summary?.estPct ?? null,
-      updateTime: summary?.updateTime || '',
-      feeRate: summary?.feeRate ?? null
-    } as FundData;
   }
 
   async function refreshData() {
@@ -919,19 +978,33 @@ export default function AppShell() {
     setSearchOpen(true);
     if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
     searchTimerRef.current = window.setTimeout(async () => {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(value.trim())}`);
-      if (!res.ok) return;
-      const list = await res.json();
-      setSearchResults(Array.isArray(list) ? list.slice(0, 8) : []);
+      try {
+        let list: any = [];
+        if (USE_DIRECT_API) {
+          list = await searchFundsClient(value.trim(), 8);
+        } else {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(value.trim())}`);
+          if (!res.ok) return;
+          list = await res.json();
+        }
+        setSearchResults(Array.isArray(list) ? list.slice(0, 8) : []);
+      } catch {
+        setSearchResults([]);
+      }
     }, 200);
   }
 
   async function handleSearchEnter() {
     const query = searchQuery.trim();
     if (!query) return;
-    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-    if (!res.ok) return;
-    const list = await res.json();
+    let list: any = [];
+    if (USE_DIRECT_API) {
+      list = await searchFundsClient(query, 8);
+    } else {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) return;
+      list = await res.json();
+    }
     if (!Array.isArray(list) || !list.length) {
       setSearchResults([]);
       return;
@@ -988,9 +1061,14 @@ export default function AppShell() {
       return;
     }
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`);
-      if (!res.ok) return;
-      const list = await res.json();
+      let list: any = [];
+      if (USE_DIRECT_API) {
+        list = await searchFundsClient(trimmed, 8);
+      } else {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`);
+        if (!res.ok) return;
+        list = await res.json();
+      }
       if (!Array.isArray(list) || !list.length) {
         setQuickImportTarget('');
         setQuickImportResolved(null);
@@ -1109,13 +1187,18 @@ export default function AppShell() {
     const cached = fundCache[normalized]?.feeRate;
     if (cached !== null && cached !== undefined) return cached;
     try {
-      const res = await fetch(`/api/fund/${normalized}/fee`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const feeRate = data?.feeRate ?? null;
+      let feeRate: number | null = null;
+      if (USE_DIRECT_API) {
+        feeRate = await getFundFeeRateClient(normalized);
+      } else {
+        const res = await fetch(`/api/fund/${normalized}/fee`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        feeRate = data?.feeRate ?? null;
+      }
       setFundCache((prev) => ({
         ...prev,
-        [normalized]: { ...(prev[normalized] || {}), feeRate }
+        [normalized]: { ...ensureFundEntry(prev, normalized), feeRate }
       }));
       return feeRate;
     } catch {
@@ -1167,19 +1250,25 @@ export default function AppShell() {
     if (cached && cached.feeRate !== null && cached.feeRate !== undefined) return;
     const data = await fetchFundData(code);
     if (!data) return;
-    setFundCache((prev) => ({ ...prev, [code]: { ...(prev[code] || {}), ...data } }));
+    setFundCache((prev) => ({ ...prev, [code]: { ...ensureFundEntry(prev, code), ...data } }));
   }
 
   async function refreshFeeRate(code: string) {
     const normalized = normalizeCode(code);
     if (!normalized) return;
-    const res = await fetch(`/api/fund/${normalized}/fee`);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data) return;
+    let feeRate: number | null = null;
+    if (USE_DIRECT_API) {
+      feeRate = await getFundFeeRateClient(normalized);
+    } else {
+      const res = await fetch(`/api/fund/${normalized}/fee`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data) return;
+      feeRate = data.feeRate ?? null;
+    }
     setFundCache((prev) => ({
       ...prev,
-      [normalized]: { ...(prev[normalized] || {}), feeRate: data.feeRate ?? null }
+      [normalized]: { ...ensureFundEntry(prev, normalized), feeRate }
     }));
   }
 
@@ -1192,23 +1281,42 @@ export default function AppShell() {
     extrasPendingRef.current.add(historyKey);
 
     setExtrasLoading(true);
-    const [positionsRes, historyRes] = await Promise.allSettled([
-      fetch(`/api/fund/${code}/positions`),
-      fetch(`/api/fund/${code}/history-table?page=${page}`)
-    ]);
+    if (USE_DIRECT_API) {
+      const [positionsRes, historyRes] = await Promise.allSettled([
+        getFundPositionsClient(code),
+        getFundHistoryTableClient(code, page)
+      ]);
 
-    if (positionsRes.status === 'fulfilled' && positionsRes.value.ok) {
-      const data = await positionsRes.value.json();
-      setPositionCache((prev) => ({ ...prev, [code]: data }));
-    } else if (!hasPositions) {
-      setPositionCache((prev) => ({ ...prev, [code]: null }));
-    }
+      if (positionsRes.status === 'fulfilled') {
+        setPositionCache((prev) => ({ ...prev, [code]: positionsRes.value }));
+      } else if (!hasPositions) {
+        setPositionCache((prev) => ({ ...prev, [code]: null }));
+      }
 
-    if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
-      const data = await historyRes.value.json();
-      setHistoryTableCache((prev) => ({ ...prev, [historyKey]: data }));
-    } else if (!hasHistoryTable) {
-      setHistoryTableCache((prev) => ({ ...prev, [historyKey]: null }));
+      if (historyRes.status === 'fulfilled') {
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: historyRes.value }));
+      } else if (!hasHistoryTable) {
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: null }));
+      }
+    } else {
+      const [positionsRes, historyRes] = await Promise.allSettled([
+        fetch(`/api/fund/${code}/positions`),
+        fetch(`/api/fund/${code}/history-table?page=${page}`)
+      ]);
+
+      if (positionsRes.status === 'fulfilled' && positionsRes.value.ok) {
+        const data = await positionsRes.value.json();
+        setPositionCache((prev) => ({ ...prev, [code]: data }));
+      } else if (!hasPositions) {
+        setPositionCache((prev) => ({ ...prev, [code]: null }));
+      }
+
+      if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
+        const data = await historyRes.value.json();
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: data }));
+      } else if (!hasHistoryTable) {
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: null }));
+      }
     }
 
     setExtrasLoading(false);
@@ -1219,14 +1327,19 @@ export default function AppShell() {
     const key = `${code}:${period}`;
     if (performanceCache[key] !== undefined) return;
     try {
-      const res = await fetch(`/api/fund/${code}/performance?period=${encodeURIComponent(period)}`);
-      if (!res.ok) {
-        setPerformanceCache((prev) => ({ ...prev, [key]: null }));
-        return;
+      if (USE_DIRECT_API) {
+        const performance = await getFundPerformanceClient(code, period);
+        setPerformanceCache((prev) => ({ ...prev, [key]: performance }));
+      } else {
+        const res = await fetch(`/api/fund/${code}/performance?period=${encodeURIComponent(period)}`);
+        if (!res.ok) {
+          setPerformanceCache((prev) => ({ ...prev, [key]: null }));
+          return;
+        }
+        const data = await res.json();
+        const performance = data && data.period ? data : data?.performance || null;
+        setPerformanceCache((prev) => ({ ...prev, [key]: performance }));
       }
-      const data = await res.json();
-      const performance = data && data.period ? data : data?.performance || null;
-      setPerformanceCache((prev) => ({ ...prev, [key]: performance }));
     } catch {
       setPerformanceCache((prev) => ({ ...prev, [key]: null }));
     }
@@ -1597,15 +1710,14 @@ export default function AppShell() {
     const isQdii = isQdiiFund(selectedData?.name);
 
     const baseAmount =
-      toNumber(prev?.amount) ?? (prev?.shares && latestNav ? prev.shares * latestNav : 0) ?? 0;
+      toNumber(prev?.amount) ?? (prev?.shares && latestNav ? prev.shares * latestNav : 0);
     const baseProfit =
       toNumber(prev?.profit) ??
       (prev?.shares && prev?.costPrice !== null && prev?.costPrice !== undefined && latestNav
         ? (latestNav - prev.costPrice) * prev.shares
-        : 0) ??
-      0;
+        : 0);
     const baseShares =
-      toNumber(prev?.shares) ?? (prev?.amount && latestNav ? prev.amount / latestNav : 0) ?? 0;
+      toNumber(prev?.shares) ?? (prev?.amount && latestNav ? prev.amount / latestNav : 0);
 
     if (type === 'reduce' && method === 'shares' && baseShares <= 0) return;
     if (type === 'reduce' && method === 'amount' && baseAmount <= 0) return;
@@ -1767,8 +1879,7 @@ export default function AppShell() {
         tempHolding?.method || (shares !== null && shares !== undefined ? 'shares' : 'amount');
       const baseAmount =
         toNumber(tempHolding?.amount) ??
-        (tempHolding?.shares && latestNav ? tempHolding.shares * latestNav : 0) ??
-        0;
+        (tempHolding?.shares && latestNav ? tempHolding.shares * latestNav : 0);
       const baseProfit =
         toNumber(tempHolding?.profit) ??
         (tempHolding?.shares &&
@@ -1776,12 +1887,10 @@ export default function AppShell() {
         tempHolding?.costPrice !== undefined &&
         latestNav
           ? (latestNav - tempHolding.costPrice) * tempHolding.shares
-          : 0) ??
-        0;
+          : 0);
       const baseShares =
         toNumber(tempHolding?.shares) ??
-        (tempHolding?.amount && latestNav ? tempHolding.amount / latestNav : 0) ??
-        0;
+        (tempHolding?.amount && latestNav ? tempHolding.amount / latestNav : 0);
 
       if (item.type === 'reduce' && method === 'shares' && baseShares <= 0) continue;
       if (item.type === 'reduce' && method === 'amount' && baseAmount <= 0) continue;
