@@ -1001,6 +1001,7 @@
       border: 1px solid rgba(47, 111, 236, 0.18);
       background: linear-gradient(180deg, rgba(47, 111, 236, 0.12), rgba(255, 255, 255, 0.7));
       padding: 12px;
+      box-sizing: border-box;
       cursor: crosshair;
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 14px 28px rgba(15, 23, 42, 0.1);
     }
@@ -2037,53 +2038,61 @@
     }
 
     #fund-modal .fund-status-panel {
-      padding: 20px;
-      gap: 16px;
+      padding: 14px;
+      gap: 10px;
     }
 
     #fund-modal .fund-status-panel .fund-meta {
-      padding: 14px;
-      gap: 14px;
-      margin-top: 6px;
+      padding: 8px;
+      gap: 8px;
+      margin-top: 2px;
     }
 
     #fund-modal .fund-status-panel .holding-left,
     #fund-modal .fund-status-panel .holding-right {
-      padding: 16px 18px;
+      padding: 10px 12px;
     }
 
     #fund-modal .fund-status-panel .holding-left strong {
-      font-size: 20px;
-    }
-
-    #fund-modal .fund-status-panel .holding-main strong {
       font-size: 17px;
     }
 
+    #fund-modal .fund-status-panel .holding-main strong {
+      font-size: 14px;
+    }
+
     #fund-modal .fund-status-panel .holding-rate {
-      font-size: 12px;
-      padding: 4px 12px;
+      font-size: 10px;
+      padding: 2px 8px;
     }
 
     #fund-modal .fund-status-panel .fund-metrics {
-      gap: 16px;
+      gap: 10px;
     }
 
     #fund-modal .fund-status-panel .metric {
-      padding: 14px;
+      padding: 8px;
     }
 
     #fund-modal .fund-status-panel .metrics-toggle {
-      margin: 12px 0 14px;
+      margin: 6px 0 8px;
     }
 
     #fund-modal .nav-chart-panel {
       padding: 8px;
       gap: 6px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      min-height: 0;
     }
 
     #fund-modal .nav-chart-panel h4 {
       margin-bottom: 4px;
+    }
+
+    #fund-modal .nav-chart-panel .detail-chart {
+      height: 100%;
+      min-height: 220px;
     }
 
     #fund-modal .nav-chart-panel .panel-footer {
