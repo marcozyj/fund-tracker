@@ -29,8 +29,34 @@ export default function Chart({
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    buildChart(containerRef.current, history || [], rangeToCount(range), markers);
+    const container = containerRef.current;
+    if (!container) return;
+    let rafId: number | null = null;
+
+    const render = () => {
+      buildChart(container, history || [], rangeToCount(range), markers);
+    };
+
+    const schedule = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(render);
+    };
+
+    render();
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => schedule());
+      observer.observe(container);
+    } else {
+      window.addEventListener('resize', schedule);
+    }
+
+    return () => {
+      if (observer) observer.disconnect();
+      else window.removeEventListener('resize', schedule);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [history, range, markers]);
 
   return <div className="chart detail-chart" ref={containerRef} />;
@@ -46,9 +72,14 @@ function buildChart(container: HTMLDivElement, history: FundHistoryPoint[], rang
   const points = history.slice(-(rangeCount || 180));
   const values = points.map((item) => item.nav);
   const dates = points.map((item) => item.date);
-  const width = 640;
-  const height = 220;
-  const padding = { top: 16, right: 20, bottom: 30, left: 46 };
+  const styles = window.getComputedStyle(container);
+  const paddingX = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+  const paddingY = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+  const contentWidth = Math.max(0, container.clientWidth - paddingX);
+  const contentHeight = Math.max(0, container.clientHeight - paddingY);
+  const width = contentWidth > 0 ? Math.round(contentWidth) : 640;
+  const height = contentHeight > 0 ? Math.round(contentHeight) : 300;
+  const padding = { top: 16, right: 20, bottom: height < 240 ? 24 : 30, left: 46 };
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
@@ -170,11 +201,11 @@ function buildChart(container: HTMLDivElement, history: FundHistoryPoint[], rang
   })();
 
   container.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+    <svg viewBox="0 0 ${width} ${height}">
       <defs>
         <linearGradient id="${areaId}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#2f6fec" stop-opacity="0.25" />
-          <stop offset="100%" stop-color="#2f6fec" stop-opacity="0.02" />
+          <stop offset="0%" stop-color="#2563eb" stop-opacity="0.25" />
+          <stop offset="100%" stop-color="#2563eb" stop-opacity="0.02" />
         </linearGradient>
       </defs>
       ${yTickLines}

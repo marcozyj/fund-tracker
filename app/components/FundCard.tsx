@@ -1,7 +1,7 @@
 'use client';
 
 import type { FundData, Holding } from '../../lib/types';
-import { classByValue, formatMoney, formatPct } from '../../lib/utils';
+import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatPct } from '../../lib/utils';
 import { computeHoldingView, trendState } from '../../lib/metrics';
 
 export default function FundCard({
@@ -35,6 +35,22 @@ export default function FundCard({
     const profitClass = classByValue(profitValue);
     const dailyProfit = view.amount !== null && dailyPct !== null ? (view.amount * dailyPct) / 100 : null;
     const dailyClass = classByValue(dailyProfit);
+    const dailyRateClass = classByValue(dailyPct);
+    const holdingRate =
+      view.amount !== null &&
+      view.amount !== undefined &&
+      profitValue !== null &&
+      profitValue !== undefined &&
+      view.amount - profitValue !== 0
+        ? (profitValue / (view.amount - profitValue)) * 100
+        : null;
+    const holdingRateClass = classByValue(holdingRate);
+    const holdingShares =
+      holding.shares !== null && holding.shares !== undefined
+        ? holding.shares
+        : view.amount !== null && view.amount !== undefined && data?.latestNav
+          ? view.amount / data.latestNav
+          : null;
 
     return (
       <div className="fund-card clickable" onClick={onOpen}>
@@ -47,24 +63,34 @@ export default function FundCard({
             <div className={`status ${stateTag.cls}`}>{stateTag.label}</div>
           </div>
         </div>
-        <div className="fund-meta">
-          <div className="meta-block">
-            <span>估值变动</span>
-            <strong className={estClass}>{data && data.estPct !== null ? formatPct(data.estPct) : '--'}</strong>
-          </div>
-          <div className="meta-block">
-            <span>当日收益</span>
-            <strong className={dailyClass}>{dailyProfit === null ? '--' : formatMoney(dailyProfit)}</strong>
-          </div>
-        </div>
-        <div className="fund-metrics">
-          <div className="metric">
+        <div className="holding-layout">
+          <div className="holding-left">
             <span>持有金额</span>
-            <strong>{formatMoney(view.amount)}</strong>
+            <strong>{formatMoneyWithSymbol(view.amount)}</strong>
+            <div className="holding-sub-row">
+              <em className="holding-sub">
+                持有份额 {holdingShares !== null && holdingShares !== undefined ? formatNumber(holdingShares, 2) : '--'}
+              </em>
+              <em className="holding-sub">
+                持仓成本价 {view.costUnit !== null && view.costUnit !== undefined ? formatNumber(view.costUnit, 4) : '--'}
+              </em>
+            </div>
           </div>
-          <div className="metric">
-            <span>持有收益</span>
-            <strong className={profitClass}>{formatMoney(profitValue)}</strong>
+          <div className="holding-right">
+            <div className="holding-row">
+              <div className="holding-main">
+                <span>当日收益</span>
+                <strong className={dailyClass}>{dailyProfit === null ? '--' : formatMoney(dailyProfit)}</strong>
+              </div>
+              <div className={`holding-rate ${dailyRateClass}`}>{formatPct(dailyPct ?? null)}</div>
+            </div>
+            <div className="holding-row">
+              <div className="holding-main">
+                <span>持有收益</span>
+                <strong className={profitClass}>{formatMoney(profitValue)}</strong>
+              </div>
+              <div className={`holding-rate ${holdingRateClass}`}>{formatPct(holdingRate)}</div>
+            </div>
           </div>
         </div>
       </div>
