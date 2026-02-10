@@ -14,6 +14,15 @@ import type {
   SearchItem,
   TradeTiming
 } from '../../lib/types';
+import {
+  getFundFeeRateClient,
+  getFundHistoryClient,
+  getFundHistoryTableClient,
+  getFundPerformanceClient,
+  getFundPositionsClient,
+  getFundSummaryClient,
+  searchFundsClient
+} from '../../lib/client-fund';
 import { classByValue, containsCjk, formatMoney, formatMoneyWithSymbol, formatPct, normalizeCode, toNumber } from '../../lib/utils';
 import { computeCostUnit, computeHoldingView, computeMetrics } from '../../lib/metrics';
 import { detectFundFromText, parseBatchText } from '../../lib/ocr';
@@ -28,6 +37,7 @@ const STORAGE_KEYS = {
 
 const LEGACY_KEY = 'steadyfund_portfolio';
 const DEFAULT_WATCHLIST = ['161725', '001632', '005963'];
+const USE_DIRECT_API = true;
 
 const CN_TIMEZONE = 'Asia/Shanghai';
 const cnFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -212,6 +222,7 @@ export default function AppShell() {
   const holdingSyncKeyRef = useRef<Map<string, string>>(new Map());
   const extrasPendingRef = useRef<Set<string>>(new Set());
   const refreshPendingRef = useRef(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     historyCacheRef.current = historyTableCache;
@@ -404,9 +415,15 @@ export default function AppShell() {
         if (fromCache !== null) return fromCache;
 
         const fetchPage = async (page: number) => {
-          const res = await fetch(`/api/fund/${code}/history-table?page=${page}`);
-          if (!res.ok) return null;
-          const data = await res.json();
+          let data: FundHistoryTableData | null = null;
+          if (USE_DIRECT_API) {
+            data = await getFundHistoryTableClient(code, page);
+          } else {
+            const res = await fetch(`/api/fund/${code}/history-table?page=${page}`);
+            if (!res.ok) return null;
+            data = await res.json();
+          }
+          if (!data) return null;
           setHistoryTableCache((prev) => {
             const next = { ...prev, [`${code}_${page}`]: data };
             historyCacheRef.current = next;
@@ -705,36 +722,63 @@ export default function AppShell() {
     const normalized = normalizeCode(code);
     if (!normalized) return null;
 
-    const [summaryRes, historyRes] = await Promise.allSettled([
-      fetch(`/api/fund/${normalized}`),
-      fetch(`/api/fund/${normalized}/values?days=365`)
-    ]);
+    try {
+      if (USE_DIRECT_API) {
+        const [summaryRes, historyRes] = await Promise.allSettled([
+          getFundSummaryClient(normalized),
+          getFundHistoryClient(normalized, 365)
+        ]);
+        const summary = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+        const historyData = historyRes.status === 'fulfilled' ? historyRes.value : null;
+        const history = Array.isArray(historyData?.history) ? historyData.history : [];
+        const metrics = computeMetrics(history);
+        return {
+          code: normalized,
+          name: summary?.name || historyData?.name || normalized,
+          history,
+          metrics,
+          latestNav: summary?.latestNav ?? null,
+          latestDate: summary?.latestDate || '',
+          estNav: summary?.estNav ?? null,
+          estPct: summary?.estPct ?? null,
+          updateTime: summary?.updateTime || '',
+          feeRate: summary?.feeRate ?? null
+        } as FundData;
+      }
 
-    let summary: any = null;
-    if (summaryRes.status === 'fulfilled' && summaryRes.value.ok) {
-      summary = await summaryRes.value.json();
+      const [summaryRes, historyRes] = await Promise.allSettled([
+        fetch(`/api/fund/${normalized}`),
+        fetch(`/api/fund/${normalized}/values?days=365`)
+      ]);
+
+      let summary: any = null;
+      if (summaryRes.status === 'fulfilled' && summaryRes.value.ok) {
+        summary = await summaryRes.value.json();
+      }
+
+      let historyData: any = null;
+      if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
+        historyData = await historyRes.value.json();
+      }
+
+      const history = Array.isArray(historyData?.history) ? historyData.history : [];
+      const metrics = computeMetrics(history);
+
+      return {
+        code: normalized,
+        name: summary?.name || historyData?.name || normalized,
+        history,
+        metrics,
+        latestNav: summary?.latestNav ?? null,
+        latestDate: summary?.latestDate || '',
+        estNav: summary?.estNav ?? null,
+        estPct: summary?.estPct ?? null,
+        updateTime: summary?.updateTime || '',
+        feeRate: summary?.feeRate ?? null
+      } as FundData;
+    } catch {
+      return null;
     }
-
-    let historyData: any = null;
-    if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
-      historyData = await historyRes.value.json();
-    }
-
-    const history = Array.isArray(historyData?.history) ? historyData.history : [];
-    const metrics = computeMetrics(history);
-
-    return {
-      code: normalized,
-      name: summary?.name || historyData?.name || normalized,
-      history,
-      metrics,
-      latestNav: summary?.latestNav ?? null,
-      latestDate: summary?.latestDate || '',
-      estNav: summary?.estNav ?? null,
-      estPct: summary?.estPct ?? null,
-      updateTime: summary?.updateTime || '',
-      feeRate: summary?.feeRate ?? null
-    } as FundData;
   }
 
   async function refreshData() {
@@ -880,19 +924,33 @@ export default function AppShell() {
     setSearchOpen(true);
     if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current);
     searchTimerRef.current = window.setTimeout(async () => {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(value.trim())}`);
-      if (!res.ok) return;
-      const list = await res.json();
-      setSearchResults(Array.isArray(list) ? list.slice(0, 8) : []);
+      try {
+        let list: any = [];
+        if (USE_DIRECT_API) {
+          list = await searchFundsClient(value.trim(), 8);
+        } else {
+          const res = await fetch(`/api/search?q=${encodeURIComponent(value.trim())}`);
+          if (!res.ok) return;
+          list = await res.json();
+        }
+        setSearchResults(Array.isArray(list) ? list.slice(0, 8) : []);
+      } catch {
+        setSearchResults([]);
+      }
     }, 200);
   }
 
   async function handleSearchEnter() {
     const query = searchQuery.trim();
     if (!query) return;
-    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-    if (!res.ok) return;
-    const list = await res.json();
+    let list: any = [];
+    if (USE_DIRECT_API) {
+      list = await searchFundsClient(query, 8);
+    } else {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+      if (!res.ok) return;
+      list = await res.json();
+    }
     if (!Array.isArray(list) || !list.length) {
       setSearchResults([]);
       return;
@@ -949,9 +1007,14 @@ export default function AppShell() {
       return;
     }
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`);
-      if (!res.ok) return;
-      const list = await res.json();
+      let list: any = [];
+      if (USE_DIRECT_API) {
+        list = await searchFundsClient(trimmed, 8);
+      } else {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`);
+        if (!res.ok) return;
+        list = await res.json();
+      }
       if (!Array.isArray(list) || !list.length) {
         setQuickImportTarget('');
         setQuickImportResolved(null);
@@ -1070,10 +1133,15 @@ export default function AppShell() {
     const cached = fundCache[normalized]?.feeRate;
     if (cached !== null && cached !== undefined) return cached;
     try {
-      const res = await fetch(`/api/fund/${normalized}/fee`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const feeRate = data?.feeRate ?? null;
+      let feeRate: number | null = null;
+      if (USE_DIRECT_API) {
+        feeRate = await getFundFeeRateClient(normalized);
+      } else {
+        const res = await fetch(`/api/fund/${normalized}/fee`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        feeRate = data?.feeRate ?? null;
+      }
       setFundCache((prev) => ({
         ...prev,
         [normalized]: { ...ensureFundEntry(prev, normalized), feeRate }
@@ -1134,13 +1202,19 @@ export default function AppShell() {
   async function refreshFeeRate(code: string) {
     const normalized = normalizeCode(code);
     if (!normalized) return;
-    const res = await fetch(`/api/fund/${normalized}/fee`);
-    if (!res.ok) return;
-    const data = await res.json();
-    if (!data) return;
+    let feeRate: number | null = null;
+    if (USE_DIRECT_API) {
+      feeRate = await getFundFeeRateClient(normalized);
+    } else {
+      const res = await fetch(`/api/fund/${normalized}/fee`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data) return;
+      feeRate = data.feeRate ?? null;
+    }
     setFundCache((prev) => ({
       ...prev,
-      [normalized]: { ...ensureFundEntry(prev, normalized), feeRate: data.feeRate ?? null }
+      [normalized]: { ...ensureFundEntry(prev, normalized), feeRate }
     }));
   }
 
@@ -1153,23 +1227,42 @@ export default function AppShell() {
     extrasPendingRef.current.add(historyKey);
 
     setExtrasLoading(true);
-    const [positionsRes, historyRes] = await Promise.allSettled([
-      fetch(`/api/fund/${code}/positions`),
-      fetch(`/api/fund/${code}/history-table?page=${page}`)
-    ]);
+    if (USE_DIRECT_API) {
+      const [positionsRes, historyRes] = await Promise.allSettled([
+        getFundPositionsClient(code),
+        getFundHistoryTableClient(code, page)
+      ]);
 
-    if (positionsRes.status === 'fulfilled' && positionsRes.value.ok) {
-      const data = await positionsRes.value.json();
-      setPositionCache((prev) => ({ ...prev, [code]: data }));
-    } else if (!hasPositions) {
-      setPositionCache((prev) => ({ ...prev, [code]: null }));
-    }
+      if (positionsRes.status === 'fulfilled') {
+        setPositionCache((prev) => ({ ...prev, [code]: positionsRes.value }));
+      } else if (!hasPositions) {
+        setPositionCache((prev) => ({ ...prev, [code]: null }));
+      }
 
-    if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
-      const data = await historyRes.value.json();
-      setHistoryTableCache((prev) => ({ ...prev, [historyKey]: data }));
-    } else if (!hasHistoryTable) {
-      setHistoryTableCache((prev) => ({ ...prev, [historyKey]: null }));
+      if (historyRes.status === 'fulfilled') {
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: historyRes.value }));
+      } else if (!hasHistoryTable) {
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: null }));
+      }
+    } else {
+      const [positionsRes, historyRes] = await Promise.allSettled([
+        fetch(`/api/fund/${code}/positions`),
+        fetch(`/api/fund/${code}/history-table?page=${page}`)
+      ]);
+
+      if (positionsRes.status === 'fulfilled' && positionsRes.value.ok) {
+        const data = await positionsRes.value.json();
+        setPositionCache((prev) => ({ ...prev, [code]: data }));
+      } else if (!hasPositions) {
+        setPositionCache((prev) => ({ ...prev, [code]: null }));
+      }
+
+      if (historyRes.status === 'fulfilled' && historyRes.value.ok) {
+        const data = await historyRes.value.json();
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: data }));
+      } else if (!hasHistoryTable) {
+        setHistoryTableCache((prev) => ({ ...prev, [historyKey]: null }));
+      }
     }
 
     setExtrasLoading(false);
@@ -1180,14 +1273,19 @@ export default function AppShell() {
     const key = `${code}:${period}`;
     if (performanceCache[key] !== undefined) return;
     try {
-      const res = await fetch(`/api/fund/${code}/performance?period=${encodeURIComponent(period)}`);
-      if (!res.ok) {
-        setPerformanceCache((prev) => ({ ...prev, [key]: null }));
-        return;
+      if (USE_DIRECT_API) {
+        const performance = await getFundPerformanceClient(code, period);
+        setPerformanceCache((prev) => ({ ...prev, [key]: performance }));
+      } else {
+        const res = await fetch(`/api/fund/${code}/performance?period=${encodeURIComponent(period)}`);
+        if (!res.ok) {
+          setPerformanceCache((prev) => ({ ...prev, [key]: null }));
+          return;
+        }
+        const data = await res.json();
+        const performance = data && data.period ? data : data?.performance || null;
+        setPerformanceCache((prev) => ({ ...prev, [key]: performance }));
       }
-      const data = await res.json();
-      const performance = data && data.period ? data : data?.performance || null;
-      setPerformanceCache((prev) => ({ ...prev, [key]: performance }));
     } catch {
       setPerformanceCache((prev) => ({ ...prev, [key]: null }));
     }
@@ -1870,6 +1968,128 @@ export default function AppShell() {
     );
   }
 
+  function buildExportPayload() {
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      data: {
+        holdings,
+        watchlist,
+        operations
+      }
+    };
+  }
+
+  function formatExportDate(value: Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}${month}${day}`;
+  }
+
+  function handleExport() {
+    if (typeof window === 'undefined') return;
+    const payload = buildExportPayload();
+    const content = JSON.stringify(payload, null, 2);
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `fund-tracker-export-${formatExportDate(new Date())}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  async function handleImportFile(file: File) {
+    if (!file) return;
+    const text = await file.text();
+    let payload: any = null;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      window.alert('导入失败：文件不是有效 JSON');
+      return;
+    }
+
+    const source = payload?.data ?? payload;
+    const rawHoldings = Array.isArray(source?.holdings) ? source.holdings : [];
+    const rawWatchlist = Array.isArray(source?.watchlist) ? source.watchlist : [];
+    const rawOperations = Array.isArray(source?.operations) ? source.operations : [];
+
+    if (!rawHoldings.length && !rawWatchlist.length && !rawOperations.length) {
+      window.alert('导入失败：未找到可用的数据字段');
+      return;
+    }
+
+    if (!window.confirm('导入会覆盖当前账户资产、持仓和自选数据，是否继续？')) return;
+
+    const normalizedHoldings = rawHoldings
+      .map((item: any) => {
+        const code = normalizeCode(item?.code);
+        if (!code) return null;
+        const method = item?.method || (item?.shares || item?.costPrice ? 'shares' : 'amount');
+        return {
+          code,
+          method,
+          amount: toNumber(item?.amount),
+          profit: toNumber(item?.profit),
+          shares: toNumber(item?.shares),
+          costPrice: toNumber(item?.costPrice),
+          firstBuy: item?.firstBuy || ''
+        } as Holding;
+      })
+      .filter(Boolean) as Holding[];
+
+    const normalizedWatchlist = rawWatchlist
+      .map((code: string) => normalizeCode(code))
+      .filter(Boolean) as string[];
+
+    const normalizedOperations = rawOperations
+      .map((item: any) => {
+        const code = normalizeCode(item?.code);
+        if (!code) return null;
+        const type = item?.type;
+        if (type !== 'add' && type !== 'reduce' && type !== 'edit') return null;
+        const createdAt = Number(item?.createdAt);
+        const applyAt = Number(item?.applyAt);
+        const nextOp: FundOperation = {
+          id: item?.id || createOperationId(),
+          code,
+          type,
+          status: item?.status === 'pending' || item?.status === 'confirmed' ? item.status : 'confirmed',
+          createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+          applyAt: Number.isFinite(applyAt) ? applyAt : Date.now(),
+          method: item?.method,
+          amount: item?.amount ?? null,
+          shares: item?.shares ?? null,
+          nav: item?.nav ?? null,
+          feeRate: item?.feeRate ?? null,
+          fee: item?.fee ?? null,
+          date: item?.date,
+          timing: item?.timing,
+          isQdii: item?.isQdii,
+          prev: item?.prev ?? null,
+          next: item?.next ?? null
+        };
+        return nextOp;
+      })
+      .filter(Boolean) as FundOperation[];
+
+    setHoldings(normalizedHoldings);
+    setWatchlist(normalizedWatchlist);
+    setOperations(normalizedOperations);
+    setSelectedCode(null);
+    setSelectedSource(null);
+    setHistoryPage(1);
+    setHistoryOpen(false);
+  }
+
+  function handleImportClick() {
+    importInputRef.current?.click();
+  }
+
   return (
     <div className="page">
       <header className="topbar reveal">
@@ -1933,6 +2153,24 @@ export default function AppShell() {
           <button className="btn secondary" id="refresh-btn" onClick={refreshData}>
             刷新数据
           </button>
+          <button className="btn secondary" type="button" onClick={handleExport}>
+            导出
+          </button>
+          <button className="btn" type="button" onClick={handleImportClick}>
+            导入
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={async (event) => {
+              const file = event.target.files?.[0] || null;
+              event.target.value = '';
+              if (!file) return;
+              await handleImportFile(file);
+            }}
+          />
         </div>
       </header>
 

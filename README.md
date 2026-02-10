@@ -1,4 +1,4 @@
-![GitHub Actions](https://github.com/marcozyj/fund-tracker/actions/workflows/deploy-pages.yml/badge.svg?branch=main)
+![GitHub Actions](https://github.com/marcozyj/fund-tracker/actions/workflows/deploy-pages.yml/badge.svg?branch=test)
 ![GitHub Repo stars](https://img.shields.io/github/stars/marcozyj/fund-tracker?style=flat-square)
 ![GitHub forks](https://img.shields.io/github/forks/marcozyj/fund-tracker?style=flat-square)
 ![GitHub issues](https://img.shields.io/github/issues/marcozyj/fund-tracker?style=flat-square)

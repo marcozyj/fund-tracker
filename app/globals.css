@@ -1299,7 +1299,7 @@
     }
 
     .detail-chart {
-      height: 280px;
+      height: 390px;
     }
 
     .chart-tooltip {
@@ -2016,7 +2016,63 @@
     }
 
     #fund-modal .detail-chart {
-      height: 300px;
+      height: 450px;
+    }
+
+    #fund-modal .fund-status-panel {
+      padding: 20px;
+      gap: 16px;
+    }
+
+    #fund-modal .fund-status-panel .fund-meta {
+      padding: 14px;
+      gap: 14px;
+      margin-top: 6px;
+    }
+
+    #fund-modal .fund-status-panel .holding-left,
+    #fund-modal .fund-status-panel .holding-right {
+      padding: 16px 18px;
+    }
+
+    #fund-modal .fund-status-panel .holding-left strong {
+      font-size: 20px;
+    }
+
+    #fund-modal .fund-status-panel .holding-main strong {
+      font-size: 17px;
+    }
+
+    #fund-modal .fund-status-panel .holding-rate {
+      font-size: 12px;
+      padding: 4px 12px;
+    }
+
+    #fund-modal .fund-status-panel .fund-metrics {
+      gap: 16px;
+    }
+
+    #fund-modal .fund-status-panel .metric {
+      padding: 14px;
+    }
+
+    #fund-modal .fund-status-panel .metrics-toggle {
+      margin: 12px 0 14px;
+    }
+
+    #fund-modal .nav-chart-panel {
+      padding: 8px;
+      gap: 6px;
+    }
+
+    #fund-modal .nav-chart-panel h4 {
+      margin-bottom: 4px;
+    }
+
+    #fund-modal .nav-chart-panel .panel-footer {
+      min-height: 16px;
+      font-size: 11px;
+      margin-top: -4px;
     }
 
     #fund-modal .modal-form {
@@ -2085,7 +2141,7 @@
 
     @media (max-height: 1500px) {
       #fund-modal .detail-chart {
-        height: 220px;
+        height: 330px;
       }
 
       #fund-modal .raw-html--positions {
@@ -2100,11 +2156,16 @@
       #fund-modal .panel {
         padding: 12px;
       }
+
+      #fund-modal .fund-status-panel {
+        padding: 18px;
+        gap: 14px;
+      }
     }
 
     @media (max-height: 1200px) {
       #fund-modal .detail-chart {
-        height: 210px;
+        height: 310px;
       }
 
       #fund-modal .modal-column {
@@ -2119,6 +2180,11 @@
       #fund-modal .fund-meta {
         gap: 8px;
         padding: 8px;
+      }
+
+      #fund-modal .fund-status-panel {
+        padding: 16px;
+        gap: 12px;
       }
 
       #fund-modal .metrics-toggle {

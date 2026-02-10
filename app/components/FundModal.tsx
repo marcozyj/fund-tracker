@@ -16,6 +16,7 @@ import type {
 import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatPct } from '../../lib/utils';
 import { parseBatchText } from '../../lib/ocr';
 import { computeHoldingView } from '../../lib/metrics';
+import { getStockQuotesClient } from '../../lib/client-fund';
 import Chart from './Chart';
 
 export default function FundModal({
@@ -145,13 +146,29 @@ export default function FundModal({
   const positionsMarkup = useMemo(() => ({ __html: positionsHtml }), [positionsHtml]);
   const holdingsList = positions?.holdings || [];
   const historyRows = useMemo(() => {
-    if (!historyTable?.content) return '';
-    const tableMatch = historyTable.content.match(/<table[^>]*>([\s\S]*?)<\/table>/i);
-    const tableHtml = tableMatch ? tableMatch[1] : historyTable.content;
-    const bodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
-    if (bodyMatch) return bodyMatch[1];
-    return tableHtml.replace(/<thead[\s\S]*?<\/thead>/i, '');
-  }, [historyTable?.content]);
+    if (historyTable?.content) {
+      const tableMatch = historyTable.content.match(/<table[^>]*>([\s\S]*?)<\/table>/i);
+      const tableHtml = tableMatch ? tableMatch[1] : historyTable.content;
+      const bodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
+      if (bodyMatch) return bodyMatch[1];
+      return tableHtml.replace(/<thead[\s\S]*?<\/thead>/i, '');
+    }
+    if (!data?.history || data.history.length === 0) return '';
+    const rows = data.history
+      .slice()
+      .reverse()
+      .slice(0, 49)
+      .map((item) => {
+        const nav = Number(item.nav);
+        const acc = item.accumulated_value ?? nav;
+        const daily = item.daily_growth_rate;
+        const dailyText =
+          typeof daily === 'number' && Number.isFinite(daily) ? `${daily.toFixed(2)}%` : '--';
+        return `<tr><td>${item.date}</td><td class='tor bold'>${nav.toFixed(4)}</td><td class='tor bold'>${Number(acc).toFixed(4)}</td><td class='tor bold'>${dailyText}</td><td>--</td><td>--</td><td class='red unbold'></td></tr>`;
+      })
+      .join('');
+    return rows;
+  }, [historyTable?.content, data?.history]);
   const coloredHistoryRows = useMemo(() => {
     if (!historyRows) return '';
     if (typeof window === 'undefined') return historyRows;
@@ -423,9 +440,9 @@ export default function FundModal({
 
   useLayoutEffect(() => {
     if (!open) return;
-    if (!positionsHtml || !positions?.quotes || holdingsList.length) return;
+    if (!positionsHtml || holdingsList.length) return;
     if (!positionRef.current) return;
-    enhancePositionTable(positionRef.current, positions.quotes);
+    void enhancePositionTable(positionRef.current, positions?.quotes || {});
   }, [open, positionsHtml, positions?.quotes, holdingsList.length]);
 
   useEffect(() => {
@@ -455,28 +472,10 @@ export default function FundModal({
         </div>
         <div className="modal-body">
           <div className="modal-column modal-main">
-            <div className="panel chart-panel">
+            <div className="panel chart-panel fund-status-panel">
             <h4>基金状态</h4>
             {data ? (
               <>
-                <div className="fund-meta" id="modal-meta">
-                  <div className="meta-block">
-                    <span>最新净值</span>
-                    <strong>{formatNumber(data.latestNav)}</strong>
-                  </div>
-                  <div className="meta-block">
-                    <span>净值日期</span>
-                    <strong>{data.latestDate || '-'}</strong>
-                  </div>
-                  <div className="meta-block">
-                    <span>估值变动（参考）</span>
-                    <strong className={estClass}>{data.estPct !== null ? formatPct(data.estPct) : '--'}</strong>
-                  </div>
-                  <div className="meta-block">
-                    <span>更新时点</span>
-                    <strong>{data.updateTime || '-'}</strong>
-                  </div>
-                </div>
                 {holding ? (
                   <div className="holding-layout modal-holding">
                     <div className="holding-left">
@@ -518,6 +517,24 @@ export default function FundModal({
                     </div>
                   </div>
                 )}
+                <div className="fund-meta" id="modal-meta">
+                  <div className="meta-block">
+                    <span>最新净值</span>
+                    <strong>{formatNumber(data.latestNav)}</strong>
+                  </div>
+                  <div className="meta-block">
+                    <span>净值日期</span>
+                    <strong>{data.latestDate || '-'}</strong>
+                  </div>
+                  <div className="meta-block">
+                    <span>估值变动（参考）</span>
+                    <strong className={estClass}>{data.estPct !== null ? formatPct(data.estPct) : '--'}</strong>
+                  </div>
+                  <div className="meta-block">
+                    <span>更新时点</span>
+                    <strong>{data.updateTime || '-'}</strong>
+                  </div>
+                </div>
                 <div className="time-toggle metrics-toggle" id="metric-range">
                   {performancePeriods.map((item) => (
                     <button
@@ -631,7 +648,7 @@ export default function FundModal({
             </div>
             <div className="helper" id="modal-hint"></div>
             </div>
-            <div className="panel">
+            <div className="panel nav-chart-panel">
               <div className="detail-header">
                 <h4>净值走势</h4>
                 <div className="time-toggle" id="chart-range">
@@ -1305,7 +1322,7 @@ function toQuarterTitle(date: string) {
   return `${year}年${quarter}季度股票投资明细`;
 }
 
-function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, StockQuote>) {
+async function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, StockQuote>) {
   const firstTable = root.querySelector('table');
   if (!firstTable) return;
   if (firstTable.getAttribute('data-enhanced') === 'true') return;
@@ -1319,7 +1336,18 @@ function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, Stock
 
   const rows = Array.from(table.querySelectorAll('tr'));
   if (!rows.length) return;
-  const hasQuotes = Boolean(quotes && Object.keys(quotes).length);
+  let resolvedQuotes = quotes && Object.keys(quotes).length ? quotes : {};
+  if (!Object.keys(resolvedQuotes).length) {
+    const codes = rows.slice(1).map((row) => extractCodeFromRow(row)).filter(Boolean);
+    if (codes.length) {
+      try {
+        resolvedQuotes = await getStockQuotesClient(codes);
+      } catch {
+        resolvedQuotes = {};
+      }
+    }
+  }
+  if (!root.isConnected) return;
 
   rows.forEach((row) => {
     const links = Array.from(row.querySelectorAll('a'));
@@ -1362,7 +1390,7 @@ function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, Stock
   const removeIndexes: number[] = [];
   headerCells.forEach((cell, idx) => {
     const text = (cell.textContent || '').replace(/\s+/g, '');
-    if (text.includes('最新价') || (hasQuotes && text.includes('涨跌幅'))) {
+    if (text.includes('最新价') || text.includes('涨跌幅')) {
       removeIndexes.push(idx);
     }
   });
@@ -1377,29 +1405,53 @@ function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, Stock
     });
   }
 
-  if (hasQuotes) {
-    const pctTh = document.createElement('th');
-    pctTh.textContent = '涨跌幅';
-    pctTh.setAttribute('data-quote', 'pct');
-    headerRow.appendChild(pctTh);
-
-    rows.slice(1).forEach((row) => {
-      const code = extractCodeFromRow(row);
-      if (!code) return;
-      const quote = quotes[code] || null;
-      const pctCell = document.createElement('td');
-      pctCell.setAttribute('data-quote', 'pct');
-      row.appendChild(pctCell);
-
-      if (quote?.pct !== null && quote?.pct !== undefined) {
-        pctCell.textContent = `${quote.pct > 0 ? '+' : ''}${quote.pct.toFixed(2)}%`;
-        pctCell.className = quote.pct > 0 ? 'market-up' : quote.pct < 0 ? 'market-down' : 'market-flat';
-      } else {
-        pctCell.textContent = '--';
-        pctCell.className = '';
-      }
+  const headerCellsAfter = Array.from(headerRow.children);
+  const insertAtIndex = (() => {
+    const targetIndex = headerCellsAfter.findIndex((cell) => {
+      const text = (cell.textContent || '').replace(/\s+/g, '');
+      return text.includes('占净值') || text.includes('持仓占比');
     });
-  }
+    return targetIndex >= 0 ? targetIndex : headerRow.children.length;
+  })();
+
+  const priceTh = document.createElement('th');
+  priceTh.textContent = '最新价';
+  priceTh.setAttribute('data-quote', 'price');
+  const pctTh = document.createElement('th');
+  pctTh.textContent = '涨跌幅';
+  pctTh.setAttribute('data-quote', 'pct');
+
+  const headerInsertRef = headerRow.children[insertAtIndex] || null;
+  headerRow.insertBefore(priceTh, headerInsertRef);
+  headerRow.insertBefore(pctTh, headerInsertRef);
+
+  rows.slice(1).forEach((row) => {
+    const code = extractCodeFromRow(row);
+    if (!code) return;
+    const quote = resolvedQuotes[code] || null;
+    const priceCell = document.createElement('td');
+    priceCell.setAttribute('data-quote', 'price');
+    const pctCell = document.createElement('td');
+    pctCell.setAttribute('data-quote', 'pct');
+
+    if (quote?.price !== null && quote?.price !== undefined && Number.isFinite(quote.price)) {
+      priceCell.textContent = quote.price.toFixed(2);
+    } else {
+      priceCell.textContent = '--';
+    }
+
+    if (quote?.pct !== null && quote?.pct !== undefined && Number.isFinite(quote.pct)) {
+      pctCell.textContent = `${quote.pct > 0 ? '+' : ''}${quote.pct.toFixed(2)}%`;
+      pctCell.className = quote.pct > 0 ? 'market-up' : quote.pct < 0 ? 'market-down' : 'market-flat';
+    } else {
+      pctCell.textContent = '--';
+      pctCell.className = '';
+    }
+
+    const rowInsertRef = row.children[insertAtIndex] || null;
+    row.insertBefore(priceCell, rowInsertRef);
+    row.insertBefore(pctCell, rowInsertRef);
+  });
 
   table.setAttribute('data-enhanced', 'true');
 }
