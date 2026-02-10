@@ -124,6 +124,7 @@ export type FundOperation = {
   method?: 'amount' | 'shares';
   amount?: number | null;
   shares?: number | null;
+  nav?: number | null;
   feeRate?: number | null;
   fee?: number | null;
   date?: string;
@@ -131,4 +132,15 @@ export type FundOperation = {
   isQdii?: boolean;
   prev?: Holding | null;
   next?: Holding | null;
+};
+
+export type BatchTradeInput = {
+  id: string;
+  type: 'add' | 'reduce';
+  amount: number | null;
+  shares: number | null;
+  date: string;
+  time?: string | null;
+  timing: TradeTiming;
+  raw?: string;
 };

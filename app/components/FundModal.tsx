@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   ChartRange,
+  BatchTradeInput,
   FundData,
   FundHistoryTableData,
   FundOperation,
@@ -12,7 +13,9 @@ import type {
   StockQuote,
   TradeTiming
 } from '../../lib/types';
-import { classByValue, formatNumber, formatPct } from '../../lib/utils';
+import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatPct } from '../../lib/utils';
+import { parseBatchText } from '../../lib/ocr';
+import { computeHoldingView } from '../../lib/metrics';
 import Chart from './Chart';
 
 export default function FundModal({
@@ -30,6 +33,8 @@ export default function FundModal({
   historyPages,
   onHistoryPageChange,
   operations,
+  historyOpen,
+  onHistoryOpenChange,
   holdingMethod,
   onMethodChange,
   form,
@@ -43,6 +48,7 @@ export default function FundModal({
   onTradeAdd,
   onTradeReduce,
   onUndoOperation,
+  onBatchImport,
   chartRange,
   onChartRangeChange,
   onPerformancePeriodChange
@@ -61,6 +67,8 @@ export default function FundModal({
   historyPages: number;
   onHistoryPageChange: (page: number) => void;
   operations: FundOperation[];
+  historyOpen: boolean;
+  onHistoryOpenChange: (open: boolean) => void;
   holdingMethod: 'amount' | 'shares';
   onMethodChange: (method: 'amount' | 'shares') => void;
   form: {
@@ -80,6 +88,7 @@ export default function FundModal({
   onTradeAdd: (payload: { amount: string; feeRate: string; date: string; timing: TradeTiming }) => void;
   onTradeReduce: (payload: { shares: string; fee: string; date: string; timing: TradeTiming }) => void;
   onUndoOperation: (operationId: string) => void;
+  onBatchImport: (items: BatchTradeInput[]) => void;
   chartRange: ChartRange;
   onChartRangeChange: (range: ChartRange) => void;
   onPerformancePeriodChange: (period: string) => void;
@@ -108,7 +117,15 @@ export default function FundModal({
   const moreRef = useRef<HTMLDivElement | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [tradeOpen, setTradeOpen] = useState<'add' | 'reduce' | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchImage, setBatchImage] = useState<File | null>(null);
+  const [batchPreview, setBatchPreview] = useState('');
+  const [ocrText, setOcrText] = useState('');
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [batchItems, setBatchItems] = useState<BatchTradeInput[]>([]);
+  const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
+  const [batchEdits, setBatchEdits] = useState<Record<string, { amount: string; shares: string }>>({});
   const [buyForm, setBuyForm] = useState({
     amount: '',
     feeRate: '',
@@ -127,6 +144,38 @@ export default function FundModal({
   );
   const positionsMarkup = useMemo(() => ({ __html: positionsHtml }), [positionsHtml]);
   const holdingsList = positions?.holdings || [];
+  const historyRows = useMemo(() => {
+    if (!historyTable?.content) return '';
+    const tableMatch = historyTable.content.match(/<table[^>]*>([\s\S]*?)<\/table>/i);
+    const tableHtml = tableMatch ? tableMatch[1] : historyTable.content;
+    const bodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
+    if (bodyMatch) return bodyMatch[1];
+    return tableHtml.replace(/<thead[\s\S]*?<\/thead>/i, '');
+  }, [historyTable?.content]);
+  const coloredHistoryRows = useMemo(() => {
+    if (!historyRows) return '';
+    if (typeof window === 'undefined') return historyRows;
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(`<table><tbody>${historyRows}</tbody></table>`, 'text/html');
+      const rows = doc.querySelectorAll('tbody tr');
+      rows.forEach((row) => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 4) return;
+        const cell = cells[3];
+        const raw = cell.textContent ? cell.textContent.trim() : '';
+        const value = Number(raw.replace('%', ''));
+        if (Number.isNaN(value)) return;
+        if (value > 0) cell.classList.add('market-up');
+        else if (value < 0) cell.classList.add('market-down');
+        else cell.classList.add('market-flat');
+      });
+      const tbody = doc.querySelector('tbody');
+      return tbody ? tbody.innerHTML : historyRows;
+    } catch {
+      return historyRows;
+    }
+  }, [historyRows]);
   const performancePeriods = [
     { key: 'ytd', label: '今年来' },
     { key: '1w', label: '近1周' },
@@ -146,6 +195,40 @@ export default function FundModal({
     }
     return null;
   }, [holding, data?.latestNav]);
+
+  const holdingView = useMemo(() => {
+    if (!holding) return null;
+    return computeHoldingView(holding, data);
+  }, [holding, data]);
+
+  const dailyPct = useMemo(() => {
+    if (!data) return null;
+    if (typeof data.estPct === 'number' && !Number.isNaN(data.estPct)) return data.estPct;
+    const history = data.history;
+    if (!Array.isArray(history) || history.length < 2) return null;
+    const last = history[history.length - 1]?.nav ?? null;
+    const prev = history[history.length - 2]?.nav ?? null;
+    if (!last || !prev) return null;
+    return ((last / prev) - 1) * 100;
+  }, [data]);
+
+  const dailyProfit =
+    holdingView?.amount !== null && holdingView?.amount !== undefined && dailyPct !== null
+      ? (holdingView.amount * dailyPct) / 100
+      : null;
+  const profitValue = holdingView?.profit ?? null;
+  const holdingRate =
+    holdingView?.amount !== null &&
+    holdingView?.amount !== undefined &&
+    profitValue !== null &&
+    profitValue !== undefined &&
+    holdingView.amount - profitValue !== 0
+      ? (profitValue / (holdingView.amount - profitValue)) * 100
+      : null;
+  const dailyClass = classByValue(dailyProfit);
+  const profitClass = classByValue(profitValue);
+  const dailyRateClass = classByValue(dailyPct ?? null);
+  const holdingRateClass = classByValue(holdingRate);
 
   const estimatedBuyFee = useMemo(() => {
     const amount = Number(buyForm.amount);
@@ -175,6 +258,93 @@ export default function FundModal({
     });
   }, [data?.feeRate, open, tradeOpen]);
 
+  useEffect(() => {
+    if (!batchOpen) return;
+    setBatchItems([]);
+    setBatchSelected({});
+    setBatchEdits({});
+    setOcrText('');
+    setBatchImage(null);
+    setBatchPreview('');
+    setOcrLoading(false);
+  }, [batchOpen]);
+
+  const handleBatchFileChange = (event: any) => {
+    const file = event.target.files?.[0] || null;
+    setBatchImage(file);
+    if (!file) {
+      setBatchPreview('');
+      setBatchItems([]);
+      setBatchSelected({});
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setBatchPreview(String(reader.result || ''));
+    };
+    reader.readAsDataURL(file);
+    handleOcr(file);
+  };
+
+  const handleBatchImport = () => {
+    const selectedItems = batchItems.filter((item) => batchSelected[item.id]);
+    if (!selectedItems.length) return;
+    onBatchImport(selectedItems);
+    setBatchOpen(false);
+    setOcrText('');
+    setBatchImage(null);
+    setBatchPreview('');
+    setBatchItems([]);
+    setBatchSelected({});
+  };
+
+  const handleOcr = async (file: File) => {
+    setOcrLoading(true);
+    try {
+      const Tesseract = await import('tesseract.js');
+      const result = await Tesseract.recognize(file, 'chi_sim');
+      const text = result?.data?.text || '';
+      setOcrText(text);
+      const items = parseBatchText(text);
+      setBatchItems(items);
+      const edits: Record<string, { amount: string; shares: string }> = {};
+      items.forEach((item) => {
+        edits[item.id] = {
+          amount: item.amount !== null && item.amount !== undefined ? String(item.amount) : '',
+          shares: item.shares !== null && item.shares !== undefined ? String(item.shares) : ''
+        };
+      });
+      setBatchEdits(edits);
+      const selected: Record<string, boolean> = {};
+      items.forEach((item) => {
+        selected[item.id] = true;
+      });
+      setBatchSelected(selected);
+    } catch {
+      setOcrText('');
+      setBatchItems([]);
+      setBatchSelected({});
+    } finally {
+      setOcrLoading(false);
+    }
+  };
+
+  const parseNumericInput = (value: string) => {
+    const cleaned = value.replace(/,/g, '').trim();
+    if (!cleaned) return null;
+    const num = Number(cleaned);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  const updateBatchValue = (id: string, field: 'amount' | 'shares', value: string) => {
+    setBatchEdits((prev) => ({
+      ...prev,
+      [id]: { amount: prev[id]?.amount ?? '', shares: prev[id]?.shares ?? '', [field]: value }
+    }));
+    const parsed = parseNumericInput(value);
+    setBatchItems((prev) => prev.map((item) => (item.id === id ? { ...item, [field]: parsed } : item)));
+  };
+
   const operationTitle = (op: FundOperation) => {
     if (op.type === 'add') return '加仓';
     if (op.type === 'reduce') return '减仓';
@@ -186,17 +356,29 @@ export default function FundModal({
 
   const operationMeta = (op: FundOperation) => {
     const parts: { text: string; className?: string }[] = [];
-    if (op.type === 'add' || op.type === 'reduce') {
-      if (op.amount !== null && op.amount !== undefined) {
-        const amountText = `${formatNumber(op.amount, 2)}元`;
-        parts.push({
-          text: amountText,
-          className: `op-amount ${op.type === 'add' ? 'op-add' : op.type === 'reduce' ? 'op-reduce' : ''}`.trim()
-        });
-      }
-      if (op.shares !== null && op.shares !== undefined) {
-        parts.push({ text: `${formatNumber(op.shares, 2)}份` });
-      }
+      if (op.type === 'add' || op.type === 'reduce') {
+        if (op.amount !== null && op.amount !== undefined) {
+          const amountText = `${formatNumber(op.amount, 2)}元`;
+          parts.push({
+            text: amountText,
+            className: `op-amount ${op.type === 'add' ? 'op-add' : op.type === 'reduce' ? 'op-reduce' : ''}`.trim()
+          });
+        }
+        if (op.shares !== null && op.shares !== undefined) {
+          parts.push({ text: `${formatNumber(op.shares, 2)}份` });
+        }
+        const derivedNav =
+          op.amount !== null &&
+          op.amount !== undefined &&
+          op.shares !== null &&
+          op.shares !== undefined &&
+          op.shares !== 0
+            ? op.amount / op.shares
+            : null;
+        const navToShow = op.nav ?? derivedNav;
+        if (navToShow !== null && navToShow !== undefined) {
+          parts.push({ text: `净值 ${formatNumber(navToShow, 4)}` });
+        }
       const feeValue =
         op.fee !== null && op.fee !== undefined
           ? op.fee
@@ -211,12 +393,12 @@ export default function FundModal({
       const nextAmount = op.next?.amount ?? null;
       if (prevAmount !== null && nextAmount !== null) {
         parts.push({
-          text: `持有金额 ${formatNumber(prevAmount, 2)}元 → ${formatNumber(nextAmount, 2)}元`,
+          text: `持有金额 ${formatMoneyWithSymbol(prevAmount)} → ${formatMoneyWithSymbol(nextAmount)}`,
           className: 'op-amount'
         });
       } else if (nextAmount !== null) {
         parts.push({
-          text: `持有金额 ${formatNumber(nextAmount, 2)}元`,
+          text: `持有金额 ${formatMoneyWithSymbol(nextAmount)}`,
           className: 'op-amount'
         });
       }
@@ -292,6 +474,47 @@ export default function FundModal({
                     <strong>{data.updateTime || '-'}</strong>
                   </div>
                 </div>
+                {holding ? (
+                  <div className="holding-layout modal-holding">
+                    <div className="holding-left">
+                      <span>持有金额</span>
+                      <strong>{formatMoneyWithSymbol(holdingView?.amount ?? null)}</strong>
+                      <div className="holding-sub-row">
+                        <em className="holding-sub">
+                          持有份额 {holdingShares !== null && holdingShares !== undefined ? formatNumber(holdingShares, 2) : '--'}
+                        </em>
+                        <em className="holding-sub">
+                          持仓成本价 {holdingView?.costUnit !== null && holdingView?.costUnit !== undefined ? formatNumber(holdingView.costUnit, 4) : '--'}
+                        </em>
+                      </div>
+                    </div>
+                    <div className="holding-right">
+                      <div className="holding-row">
+                        <div className="holding-main">
+                          <span>当日收益</span>
+                          <strong className={dailyClass}>
+                            {dailyProfit === null ? '--' : formatMoney(dailyProfit)}
+                          </strong>
+                        </div>
+                        <div className={`holding-rate ${dailyRateClass}`}>{formatPct(dailyPct ?? null)}</div>
+                      </div>
+                      <div className="holding-row">
+                        <div className="holding-main">
+                          <span>持有收益</span>
+                          <strong className={profitClass}>{formatMoney(profitValue)}</strong>
+                        </div>
+                        <div className={`holding-rate ${holdingRateClass}`}>{formatPct(holdingRate)}</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="holding-layout modal-holding holding-empty">
+                    <div className="holding-empty-card">
+                      <span>暂无持仓数据</span>
+                      <em>添加持仓后展示持有金额与收益</em>
+                    </div>
+                  </div>
+                )}
                 <div className="time-toggle metrics-toggle" id="metric-range">
                   {performancePeriods.map((item) => (
                     <button
@@ -330,86 +553,14 @@ export default function FundModal({
             ) : (
               <div className="empty-state">正在拉取数据...</div>
             )}
-            <div className="method-toggle" id="holding-method">
-              <button
-                className={`mini-btn ${holdingMethod === 'amount' ? 'active' : ''}`}
-                data-method="amount"
-                onClick={() => onMethodChange('amount')}
-              >
-                按金额
-              </button>
-              <button
-                className={`mini-btn ${holdingMethod === 'shares' ? 'active' : ''}`}
-                data-method="shares"
-                onClick={() => onMethodChange('shares')}
-              >
-                按份额
-              </button>
-            </div>
-            <div className="modal-form" data-mode={holdingMethod}>
-              <label className="form-item" data-method="amount">
-                持有金额
-                <input
-                  id="modal-amount"
-                  type="number"
-                  step="0.01"
-                  placeholder="例如 20000"
-                  value={form.amount}
-                  onChange={(e) => onFormChange('amount', e.target.value)}
-                />
-              </label>
-              <label className="form-item" data-method="amount">
-                持有收益
-                <input
-                  id="modal-profit"
-                  type="number"
-                  step="0.01"
-                  placeholder="例如 1200"
-                  value={form.profit}
-                  onChange={(e) => onFormChange('profit', e.target.value)}
-                />
-              </label>
-              <label className="form-item" data-method="shares">
-                持有份额
-                <input
-                  id="modal-shares"
-                  type="number"
-                  step="0.01"
-                  placeholder="例如 3200"
-                  value={form.shares}
-                  onChange={(e) => onFormChange('shares', e.target.value)}
-                />
-              </label>
-              <label className="form-item" data-method="shares">
-                持仓成本价
-                <input
-                  id="modal-cost-price"
-                  type="number"
-                  step="0.0001"
-                  placeholder="例如 1.2568"
-                  value={form.costPrice}
-                  onChange={(e) => onFormChange('costPrice', e.target.value)}
-                />
-              </label>
-              <label className="form-item">
-                第一次购买日期
-                <input
-                  id="modal-firstbuy"
-                  type="date"
-                  value={form.firstBuy}
-                  onChange={(e) => onFormChange('firstBuy', e.target.value)}
-                />
-              </label>
-              <div className="form-item">
-                成本单价（自动计算）
-                <input id="modal-cost" type="text" readOnly value={costUnitText} />
-              </div>
-            </div>
             <div className="modal-actions">
               <div className="position-actions">
                 <div className="action-left">
-                  <button className="btn" type="button" onClick={onUpdateHolding}>
+                  <button className="btn" type="button" onClick={() => setEditOpen(true)}>
                     修改持仓
+                  </button>
+                  <button className="btn secondary" type="button" onClick={() => setBatchOpen(true)}>
+                    批量调仓
                   </button>
                   <button
                     className="btn secondary"
@@ -434,7 +585,7 @@ export default function FundModal({
                   <button
                     className="btn secondary"
                     type="button"
-                    onClick={() => setHistoryOpen(true)}
+                    onClick={() => onHistoryOpenChange(true)}
                   >
                     历史
                   </button>
@@ -536,12 +687,21 @@ export default function FundModal({
                     </thead>
                     <tbody>
                       {holdingsList.map((item) => {
-                        const quoteKey = item.code.toUpperCase();
-                        const quote = positions?.quotes?.[quoteKey];
+                        const quoteKey = (
+                          item.code ||
+                          (item.secid ? item.secid.split('.').pop() : '') ||
+                          ''
+                        ).toUpperCase();
+                        const quote = quoteKey ? positions?.quotes?.[quoteKey] : undefined;
                         const pct = quote?.pct ?? null;
+                        const displayCode =
+                          item.code ||
+                          (item.secid ? item.secid.split('.').pop() : '') ||
+                          quote?.code ||
+                          '--';
                         return (
                           <tr key={`${item.code}-${item.name}`}>
-                            <td>{item.code || '--'}</td>
+                            <td>{displayCode}</td>
                             <td>{item.name || '--'}</td>
                             <td className={pct === null ? '' : pct > 0 ? 'market-up' : pct < 0 ? 'market-down' : 'market-flat'}>
                               {pct === null ? '--' : `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`}
@@ -608,11 +768,49 @@ export default function FundModal({
               </div>
             </div>
             {historyTable?.content ? (
-              <div className="raw-html raw-html--history" dangerouslySetInnerHTML={{ __html: historyTable.content }} />
+              <div className="history-table-wrap">
+                <div className="history-table-head">
+                  <table className="history-table">
+                    <colgroup>
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th>净值日期</th>
+                        <th>单位净值</th>
+                        <th>累计净值</th>
+                      <th>日涨跌</th>
+                        <th>申购状态</th>
+                        <th>赎回状态</th>
+                        <th>分红送配</th>
+                      </tr>
+                    </thead>
+                  </table>
+                </div>
+                <div className="raw-html raw-html--history">
+                  <table className="history-table">
+                    <colgroup>
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                    </colgroup>
+                    <tbody dangerouslySetInnerHTML={{ __html: coloredHistoryRows }} />
+                  </table>
+                </div>
+              </div>
             ) : (
               <div className="empty-state">{extrasLoading ? '正在拉取数据...' : '暂无历史净值数据'}</div>
             )}
-            <div className="helper panel-footer">&nbsp;</div>
           </div>
           </div>
         </div>
@@ -792,13 +990,209 @@ export default function FundModal({
           </div>
         </div>
       )}
+      {editOpen && (
+        <div className="submodal">
+          <div className="submodal-backdrop" onClick={() => setEditOpen(false)} />
+          <div className="submodal-card">
+            <div className="submodal-header">
+              <h4>修改持仓</h4>
+              <button className="mini-btn" onClick={() => setEditOpen(false)}>关闭</button>
+            </div>
+            <div className="submodal-body">
+              <div className="method-toggle" id="holding-method">
+                <button
+                  className={`mini-btn ${holdingMethod === 'amount' ? 'active' : ''}`}
+                  data-method="amount"
+                  onClick={() => onMethodChange('amount')}
+                >
+                  按金额
+                </button>
+                <button
+                  className={`mini-btn ${holdingMethod === 'shares' ? 'active' : ''}`}
+                  data-method="shares"
+                  onClick={() => onMethodChange('shares')}
+                >
+                  按份额
+                </button>
+              </div>
+              <div className="modal-form" data-mode={holdingMethod}>
+                <label className="form-item" data-method="amount">
+                  持有金额
+                  <input
+                    id="modal-amount"
+                    type="number"
+                    step="0.01"
+                    placeholder="例如 20000"
+                    value={form.amount}
+                    onChange={(e) => onFormChange('amount', e.target.value)}
+                  />
+                </label>
+                <label className="form-item" data-method="amount">
+                  持有收益
+                  <input
+                    id="modal-profit"
+                    type="number"
+                    step="0.01"
+                    placeholder="例如 1200"
+                    value={form.profit}
+                    onChange={(e) => onFormChange('profit', e.target.value)}
+                  />
+                </label>
+                <label className="form-item" data-method="shares">
+                  持有份额
+                  <input
+                    id="modal-shares"
+                    type="number"
+                    step="0.01"
+                    placeholder="例如 3200"
+                    value={form.shares}
+                    onChange={(e) => onFormChange('shares', e.target.value)}
+                  />
+                </label>
+                <label className="form-item" data-method="shares">
+                  持仓成本价
+                  <input
+                    id="modal-cost-price"
+                    type="number"
+                    step="0.0001"
+                    placeholder="例如 1.2568"
+                    value={form.costPrice}
+                    onChange={(e) => onFormChange('costPrice', e.target.value)}
+                  />
+                </label>
+                <label className="form-item">
+                  第一次购买日期
+                  <input
+                    id="modal-firstbuy"
+                    type="date"
+                    value={form.firstBuy}
+                    onChange={(e) => onFormChange('firstBuy', e.target.value)}
+                  />
+                </label>
+                <div className="form-item">
+                  成本单价（自动计算）
+                  <input id="modal-cost" type="text" readOnly value={costUnitText} />
+                </div>
+              </div>
+              <div className="submodal-actions">
+                <button className="btn secondary" type="button" onClick={() => setEditOpen(false)}>
+                  取消
+                </button>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => {
+                    onUpdateHolding();
+                    setEditOpen(false);
+                  }}
+                >
+                  确认修改
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {batchOpen && (
+        <div className="submodal">
+          <div className="submodal-backdrop" onClick={() => setBatchOpen(false)} />
+          <div className="submodal-card batch-card">
+            <div className="submodal-header">
+              <h4>批量调仓</h4>
+            </div>
+            <div className="submodal-body">
+              <div className="batch-layout">
+                <div className="batch-left">
+                  <label className="form-item">
+                    选择图片
+                    <input type="file" accept="image/*" onChange={handleBatchFileChange} />
+                  </label>
+                  {batchPreview ? <img className="batch-preview" src={batchPreview} alt="交易记录预览" /> : null}
+                  {ocrLoading ? <div className="loading-indicator">识别中...</div> : null}
+                </div>
+                <div className="batch-right">
+                  <div className="batch-head">识别结果</div>
+                  {batchItems.length ? (
+                    <div className="batch-list">
+                      {batchItems.map((item) => {
+                        const label = item.type === 'add' ? '加仓' : '减仓';
+                        const edit = batchEdits[item.id] || { amount: '', shares: '' };
+                        const showAmount = item.type === 'add' || item.amount !== null;
+                        const showShares = item.type === 'reduce' || item.shares !== null;
+                        const timeLabel = item.time ? ` ${item.time}` : '';
+                        const timingLabel = item.timing === 'after' ? '15:00后' : '15:00前';
+                        return (
+                          <label key={item.id} className="batch-item">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(batchSelected[item.id])}
+                              onChange={(e) =>
+                                setBatchSelected((prev) => ({ ...prev, [item.id]: e.target.checked }))
+                              }
+                            />
+                            <div className="batch-info">
+                              <div className="batch-row">
+                                <strong className={item.type === 'add' ? 'market-up' : 'market-down'}>{label}</strong>
+                                <div className="batch-value">
+                                  {showAmount ? (
+                                    <div className="batch-input">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        value={edit.amount}
+                                        onChange={(e) => updateBatchValue(item.id, 'amount', e.target.value)}
+                                      />
+                                      <span className="batch-unit">元</span>
+                                    </div>
+                                  ) : null}
+                                  {showShares ? (
+                                    <div className="batch-input">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        value={edit.shares}
+                                        onChange={(e) => updateBatchValue(item.id, 'shares', e.target.value)}
+                                      />
+                                      <span className="batch-unit">份</span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <span className="batch-meta">
+                                {item.date}
+                                {timeLabel} · {timingLabel}
+                              </span>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="empty-state">暂无识别结果</div>
+                  )}
+                </div>
+              </div>
+              <div className="submodal-actions">
+                <button className="btn secondary" type="button" onClick={() => setBatchOpen(false)}>
+                  取消
+                </button>
+                <button className="btn" type="button" onClick={handleBatchImport} disabled={!batchItems.length}>
+                  导入记录
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {historyOpen && (
         <div className="submodal">
-          <div className="submodal-backdrop" onClick={() => setHistoryOpen(false)} />
+          <div className="submodal-backdrop" onClick={() => onHistoryOpenChange(false)} />
           <div className="submodal-card history-card">
             <div className="submodal-header">
               <h4>历史操作记录</h4>
-              <button className="mini-btn" onClick={() => setHistoryOpen(false)}>关闭</button>
+              <button className="mini-btn" onClick={() => onHistoryOpenChange(false)}>关闭</button>
             </div>
             <div className="submodal-body">
               {operations.length ? (

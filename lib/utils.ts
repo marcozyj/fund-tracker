@@ -41,6 +41,11 @@ export function formatMoney(value: number | null) {
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+export function formatMoneyWithSymbol(value: number | null, symbol = '¥') {
+  const text = formatMoney(value);
+  return text === '--' ? text : `${symbol}${text}`;
+}
+
 export function containsCjk(text: string) {
   return /[\u4e00-\u9fff]/.test(text);
 }
