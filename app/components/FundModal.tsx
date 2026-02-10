@@ -452,7 +452,7 @@ export default function FundModal({
         </div>
         <div className="modal-body">
           <div className="modal-column modal-main">
-            <div className="panel chart-panel">
+            <div className="panel chart-panel fund-status-panel">
             <h4>基金状态</h4>
             {data ? (
               <>
@@ -628,7 +628,7 @@ export default function FundModal({
             </div>
             <div className="helper" id="modal-hint"></div>
             </div>
-            <div className="panel">
+            <div className="panel nav-chart-panel">
               <div className="detail-header">
                 <h4>净值走势</h4>
                 <div className="time-toggle" id="chart-range">
