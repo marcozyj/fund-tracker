@@ -15,7 +15,7 @@ import type {
 } from '../../lib/types';
 import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatPct } from '../../lib/utils';
 import { parseBatchText } from '../../lib/ocr';
-import { computeHoldingView } from '../../lib/metrics';
+import { computeHoldingView, resolveDailyPct } from '../../lib/metrics';
 import { getStockQuotesClient } from '../../lib/client-fund';
 import Chart from './Chart';
 
@@ -94,7 +94,8 @@ export default function FundModal({
   onChartRangeChange: (range: ChartRange) => void;
   onPerformancePeriodChange: (period: string) => void;
 }) {
-  const estClass = data?.estPct !== null && data?.estPct !== undefined ? classByValue(data.estPct) : '';
+  const dailyPct = useMemo(() => resolveDailyPct(data), [data]);
+  const estClass = dailyPct !== null && dailyPct !== undefined ? classByValue(dailyPct) : '';
   const growthClass = performance && performance.growthPct !== null ? classByValue(performance.growthPct) : '';
   const rankChangeClass =
     performance?.rankChange?.direction === 'up'
@@ -217,17 +218,6 @@ export default function FundModal({
     if (!holding) return null;
     return computeHoldingView(holding, data);
   }, [holding, data]);
-
-  const dailyPct = useMemo(() => {
-    if (!data) return null;
-    if (typeof data.estPct === 'number' && !Number.isNaN(data.estPct)) return data.estPct;
-    const history = data.history;
-    if (!Array.isArray(history) || history.length < 2) return null;
-    const last = history[history.length - 1]?.nav ?? null;
-    const prev = history[history.length - 2]?.nav ?? null;
-    if (!last || !prev) return null;
-    return ((last / prev) - 1) * 100;
-  }, [data]);
 
   const dailyProfit =
     holdingView?.amount !== null && holdingView?.amount !== undefined && dailyPct !== null
@@ -528,7 +518,7 @@ export default function FundModal({
                   </div>
                   <div className="meta-block">
                     <span>估值变动（参考）</span>
-                    <strong className={estClass}>{data.estPct !== null ? formatPct(data.estPct) : '--'}</strong>
+                    <strong className={estClass}>{dailyPct !== null ? formatPct(dailyPct) : '--'}</strong>
                   </div>
                   <div className="meta-block">
                     <span>更新时点</span>

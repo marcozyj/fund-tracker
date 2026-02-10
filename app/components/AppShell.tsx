@@ -24,7 +24,7 @@ import {
   searchFundsClient
 } from '../../lib/client-fund';
 import { classByValue, containsCjk, formatMoney, formatMoneyWithSymbol, formatPct, normalizeCode, toNumber } from '../../lib/utils';
-import { computeCostUnit, computeHoldingView, computeMetrics } from '../../lib/metrics';
+import { computeCostUnit, computeHoldingView, computeMetrics, resolveDailyPct } from '../../lib/metrics';
 import { detectFundFromText, parseBatchText } from '../../lib/ocr';
 import FundCard from './FundCard';
 import FundModal from './FundModal';
@@ -904,17 +904,6 @@ export default function AppShell() {
     }
   }
 
-  function deriveDailyPct(data?: FundData | null) {
-    if (!data) return null;
-    if (typeof data.estPct === 'number' && !Number.isNaN(data.estPct)) return data.estPct;
-    const history = data.history;
-    if (!Array.isArray(history) || history.length < 2) return null;
-    const last = history[history.length - 1]?.nav ?? null;
-    const prev = history[history.length - 2]?.nav ?? null;
-    if (!last || !prev) return null;
-    return ((last / prev) - 1) * 100;
-  }
-
   function computeLatestUpdateTime(codes: string[]) {
     let updateTime = '';
     codes.forEach((code) => {
@@ -947,7 +936,7 @@ export default function AppShell() {
         totalProfit += view.profit;
         totalCost += view.amount - view.profit;
       }
-      const dailyPct = deriveDailyPct(data);
+      const dailyPct = resolveDailyPct(data);
       if (view.amount !== null && dailyPct !== null) {
         dailyProfit += (view.amount * dailyPct) / 100;
         dailyAsset += view.amount;
@@ -2374,7 +2363,7 @@ export default function AppShell() {
             {holdings.map((holding) => {
               const data = fundCache[holding.code];
               const view = computeHoldingView(holding, data);
-              const dailyPct = deriveDailyPct(data);
+              const dailyPct = resolveDailyPct(data);
               const dailyProfit =
                 view.amount !== null && view.amount !== undefined && dailyPct !== null
                   ? (view.amount * dailyPct) / 100

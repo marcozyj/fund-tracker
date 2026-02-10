@@ -1,5 +1,5 @@
 import type { FundHistoryPoint, FundMetrics, Holding, FundData, TrendState } from './types';
-import { toNumber } from './utils';
+import { toDateString, toNumber } from './utils';
 
 export function computeMetrics(history: FundHistoryPoint[]): FundMetrics | null {
   if (!history || history.length < 2) return null;
@@ -43,6 +43,49 @@ export function trendState(metrics: FundMetrics | null): TrendState {
   if (metrics.recent > 2 && metrics.maxDrawdown > -10) return { label: '偏强', cls: 'strong' };
   if (metrics.recent < -2 && metrics.maxDrawdown < -8) return { label: '偏弱', cls: 'weak' };
   return { label: '震荡', cls: 'flat' };
+}
+
+
+export function resolveDailyPct(data?: FundData | null) {
+  if (!data) return null;
+  const latestDate = toDateString(data.latestDate);
+  const today = toDateString(Date.now());
+  const history = Array.isArray(data.history) ? data.history : [];
+  const latestNav = toNumber(data.latestNav);
+
+  if (latestDate && latestDate === today) {
+    let prevNav: number | null = null;
+    if (history.length) {
+      const last = history[history.length - 1];
+      if (last?.date && toDateString(last.date) === latestDate && history.length >= 2) {
+        prevNav = history[history.length - 2]?.nav ?? null;
+      } else {
+        prevNav = last?.nav ?? null;
+      }
+    }
+    if (latestNav !== null && prevNav !== null) {
+      return ((latestNav / prevNav) - 1) * 100;
+    }
+    const last = history[history.length - 1];
+    if (last && typeof last.daily_growth_rate === 'number' && Number.isFinite(last.daily_growth_rate)) {
+      return last.daily_growth_rate;
+    }
+  }
+
+  if (typeof data.estPct === 'number' && Number.isFinite(data.estPct)) return data.estPct;
+  const estNav = toNumber(data.estNav);
+  if (estNav !== null && latestNav !== null) {
+    return ((estNav / latestNav) - 1) * 100;
+  }
+  if (!history.length) return null;
+  const last = history[history.length - 1];
+  if (typeof last?.daily_growth_rate === 'number' && Number.isFinite(last.daily_growth_rate)) {
+    return last.daily_growth_rate;
+  }
+  if (history.length < 2) return null;
+  const prev = history[history.length - 2]?.nav ?? null;
+  if (!prev) return null;
+  return ((last.nav / prev) - 1) * 100;
 }
 
 export function computeCostUnit(amount: any, profit: any, latestNav: number | null) {
