@@ -2,7 +2,7 @@
 
 import type { FundData, Holding } from '../../lib/types';
 import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatPct } from '../../lib/utils';
-import { computeHoldingView, trendState } from '../../lib/metrics';
+import { computeHoldingView, trendState, resolveDailyPct } from '../../lib/metrics';
 
 export default function FundCard({
   variant,
@@ -21,13 +21,12 @@ export default function FundCard({
 }) {
   const metrics = data ? data.metrics : null;
   const stateTag = trendState(metrics);
-  const estClass = data && data.estPct !== null ? classByValue(data.estPct) : '';
+  const dailyPct = resolveDailyPct(data);
+  const estClass = dailyPct !== null ? classByValue(dailyPct) : '';
   const recentClass = metrics ? classByValue(metrics.recent) : '';
   const cumulativeClass = metrics ? classByValue(metrics.cumulative) : '';
   const ddClass = metrics ? classByValue(metrics.maxDrawdown) : '';
   const volClass = metrics ? classByValue(metrics.volatility) : '';
-
-  const dailyPct = deriveDailyPct(data);
 
   if (variant === 'holding' && holding) {
     const view = computeHoldingView(holding, data);
@@ -116,7 +115,7 @@ export default function FundCard({
         </div>
         <div className="meta-block">
           <span>估值变动（参考）</span>
-          <strong className={estClass}>{data && data.estPct !== null ? formatPct(data.estPct) : '--'}</strong>
+          <strong className={estClass}>{dailyPct !== null ? formatPct(dailyPct) : '--'}</strong>
         </div>
       </div>
       <div className="fund-metrics">
@@ -139,19 +138,4 @@ export default function FundCard({
       </div>
     </div>
   );
-}
-
-function deriveDailyPct(data?: FundData) {
-  if (!data) return null;
-  if (typeof data.estPct === 'number' && Number.isFinite(data.estPct)) return data.estPct;
-  const history = Array.isArray(data.history) ? data.history : [];
-  if (!history.length) return null;
-  const last = history[history.length - 1];
-  if (typeof last.daily_growth_rate === 'number' && Number.isFinite(last.daily_growth_rate)) {
-    return last.daily_growth_rate;
-  }
-  if (history.length < 2) return null;
-  const prev = history[history.length - 2]?.nav ?? null;
-  if (!prev) return null;
-  return ((last.nav / prev) - 1) * 100;
 }

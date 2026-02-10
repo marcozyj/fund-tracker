@@ -1,6 +1,20 @@
 import { resolveFundCode } from '../../../../lib/api';
 import { getFundBasic, getFundFeeRate, getFundHistory, normalizeCode } from '../../../../lib/fund';
 
+async function fetchFundGz(code: string) {
+  const url = `https://fundgz.1234567.com.cn/js/${code}.js?rt=${Date.now()}`;
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const text = await res.text();
+    const match = text.match(/jsonpgz\((.*)\);?/);
+    if (!match) return null;
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request, { params }: { params: { code?: string } }) {
   const code = normalizeCode(resolveFundCode(request, params));
   if (!code) {
@@ -8,9 +22,10 @@ export async function GET(request: Request, { params }: { params: { code?: strin
   }
 
   try {
-    const [basic, history] = await Promise.all([
+    const [basic, history, gz] = await Promise.all([
       getFundBasic(code),
-      getFundHistory(code, 30)
+      getFundHistory(code, 30),
+      fetchFundGz(code)
     ]);
     let feeRate: number | null = null;
     try {
@@ -24,19 +39,32 @@ export async function GET(request: Request, { params }: { params: { code?: strin
     }
 
     const latestPoint = history.history.length ? history.history[history.history.length - 1] : null;
-    const latestNav = latestPoint?.nav ?? null;
-    const latestDate = latestPoint?.date || '';
-    const estPct = latestPoint?.daily_growth_rate ?? null;
+    let latestNav = latestPoint?.nav ?? null;
+    let latestDate = latestPoint?.date || '';
+    let estNav: number | null = latestNav;
+    let estPct: number | null = latestPoint?.daily_growth_rate ?? null;
+    let updateTime = latestDate;
+
+    if (gz && typeof gz === 'object') {
+      const nav = Number(gz.dwjz);
+      if (Number.isFinite(nav)) latestNav = nav;
+      if (gz.jzrq) latestDate = String(gz.jzrq);
+      const gsz = Number(gz.gsz);
+      if (Number.isFinite(gsz)) estNav = gsz;
+      const gszzl = Number(gz.gszzl);
+      if (Number.isFinite(gszzl)) estPct = gszzl;
+      updateTime = gz.gztime || latestDate || updateTime;
+    }
 
     return Response.json({
       code,
-      name: history?.name || basic?.name || code,
+      name: gz?.name || history?.name || basic?.name || code,
       type: basic?.type || '',
       latestNav,
       latestDate,
-      estNav: latestNav,
+      estNav,
       estPct,
-      updateTime: latestDate,
+      updateTime,
       feeRate
     });
   } catch (e) {
