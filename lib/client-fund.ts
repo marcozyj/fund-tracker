@@ -27,8 +27,8 @@ const cnFormatter = new Intl.DateTimeFormat('en-CA', {
 
 const FUND_GZ_URL = 'https://fundgz.1234567.com.cn/js/';
 const PINGZHONG_URL = 'https://fund.eastmoney.com/pingzhongdata/';
-const FUND_HISTORY_TABLE_URL = 'https://fund.eastmoney.com/f10/F10DataApi.aspx?type=lsjz';
-const FUND_FEE_API_URL = 'https://fund.eastmoney.com/f10/F10DataApi.aspx?type=jjfl';
+const FUND_HISTORY_TABLE_URL = 'https://fundf10.eastmoney.com/F10DataApi.aspx?type=lsjz';
+const FUND_FEE_API_URL = 'https://fundf10.eastmoney.com/F10DataApi.aspx?type=jjfl';
 const FUND_JDZF_URL = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jdzf';
 const FUND_POSITION_URL = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc';
 const TT_POSITION_URL = 'https://dgs.tiantianfunds.com/merge/m/api/jjxqy2';
