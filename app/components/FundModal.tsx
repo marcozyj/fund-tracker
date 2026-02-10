@@ -413,8 +413,11 @@ export default function FundModal({
   const chartMarkers = useMemo(
     () =>
       operations
-        .filter((op) => (op.type === 'add' || op.type === 'reduce') && Boolean(op.date))
-        .map((op) => ({ date: op.date || '', type: op.type })),
+        .filter(
+          (op): op is FundOperation & { type: 'add' | 'reduce'; date: string } =>
+            (op.type === 'add' || op.type === 'reduce') && Boolean(op.date)
+        )
+        .map((op) => ({ date: op.date, type: op.type })),
     [operations]
   );
 

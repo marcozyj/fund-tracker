@@ -1,9 +1,21 @@
-import { analyzeFund } from '../../../../../../lib/analysis';
-import { resolveFundCode } from '../../../../../../lib/api';
-import { getFundHistory, normalizeCode } from '../../../../../../lib/fund';
+import { NextRequest } from 'next/server';
+import { analyzeFund } from '../../../../../lib/analysis';
+import { resolveFundCode } from '../../../../../lib/api';
+import { getFundHistory, normalizeCode } from '../../../../../lib/fund';
 
-export async function GET(request: Request, { params }: { params: { code?: string } }) {
-  const code = normalizeCode(resolveFundCode(request, params));
+export const dynamic = 'force-static';
+export const dynamicParams = false;
+
+export async function generateStaticParams() {
+  return [];
+}
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ code: string }> }
+) {
+  const { code: rawCode } = await params;
+  const code = normalizeCode(resolveFundCode(request, { code: rawCode }));
   if (!code) {
     return Response.json({ error: 'Invalid fund code' }, { status: 400 });
   }

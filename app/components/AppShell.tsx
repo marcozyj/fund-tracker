@@ -135,6 +135,23 @@ function createOperationId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
+function ensureFundEntry(cache: Record<string, FundData>, code: string): FundData {
+  return (
+    cache[code] ?? {
+      code,
+      name: code,
+      history: [],
+      metrics: null,
+      latestNav: null,
+      latestDate: '',
+      estNav: null,
+      estPct: null,
+      updateTime: '',
+      feeRate: null
+    }
+  );
+}
+
 export default function AppShell() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [watchlist, setWatchlist] = useState<string[]>([]);
@@ -358,7 +375,7 @@ export default function AppShell() {
         const next = prev.map((op) => {
           if (op.status === 'pending' && now >= op.applyAt) {
             changed = true;
-            return { ...op, status: 'confirmed' };
+            return { ...op, status: 'confirmed' as FundOperation['status'] };
           }
           return op;
         });
@@ -1059,7 +1076,7 @@ export default function AppShell() {
       const feeRate = data?.feeRate ?? null;
       setFundCache((prev) => ({
         ...prev,
-        [normalized]: { ...(prev[normalized] || {}), feeRate }
+        [normalized]: { ...ensureFundEntry(prev, normalized), feeRate }
       }));
       return feeRate;
     } catch {
@@ -1111,7 +1128,7 @@ export default function AppShell() {
     if (cached && cached.feeRate !== null && cached.feeRate !== undefined) return;
     const data = await fetchFundData(code);
     if (!data) return;
-    setFundCache((prev) => ({ ...prev, [code]: { ...(prev[code] || {}), ...data } }));
+    setFundCache((prev) => ({ ...prev, [code]: { ...ensureFundEntry(prev, code), ...data } }));
   }
 
   async function refreshFeeRate(code: string) {
@@ -1123,7 +1140,7 @@ export default function AppShell() {
     if (!data) return;
     setFundCache((prev) => ({
       ...prev,
-      [normalized]: { ...(prev[normalized] || {}), feeRate: data.feeRate ?? null }
+      [normalized]: { ...ensureFundEntry(prev, normalized), feeRate: data.feeRate ?? null }
     }));
   }
 
@@ -1541,15 +1558,14 @@ export default function AppShell() {
     const isQdii = isQdiiFund(selectedData?.name);
 
     const baseAmount =
-      toNumber(prev?.amount) ?? (prev?.shares && latestNav ? prev.shares * latestNav : 0) ?? 0;
+      toNumber(prev?.amount) ?? (prev?.shares && latestNav ? prev.shares * latestNav : 0);
     const baseProfit =
       toNumber(prev?.profit) ??
       (prev?.shares && prev?.costPrice !== null && prev?.costPrice !== undefined && latestNav
         ? (latestNav - prev.costPrice) * prev.shares
-        : 0) ??
-      0;
+        : 0);
     const baseShares =
-      toNumber(prev?.shares) ?? (prev?.amount && latestNav ? prev.amount / latestNav : 0) ?? 0;
+      toNumber(prev?.shares) ?? (prev?.amount && latestNav ? prev.amount / latestNav : 0);
 
     if (type === 'reduce' && method === 'shares' && baseShares <= 0) return;
     if (type === 'reduce' && method === 'amount' && baseAmount <= 0) return;
@@ -1711,8 +1727,7 @@ export default function AppShell() {
         tempHolding?.method || (shares !== null && shares !== undefined ? 'shares' : 'amount');
       const baseAmount =
         toNumber(tempHolding?.amount) ??
-        (tempHolding?.shares && latestNav ? tempHolding.shares * latestNav : 0) ??
-        0;
+        (tempHolding?.shares && latestNav ? tempHolding.shares * latestNav : 0);
       const baseProfit =
         toNumber(tempHolding?.profit) ??
         (tempHolding?.shares &&
@@ -1720,12 +1735,10 @@ export default function AppShell() {
         tempHolding?.costPrice !== undefined &&
         latestNav
           ? (latestNav - tempHolding.costPrice) * tempHolding.shares
-          : 0) ??
-        0;
+          : 0);
       const baseShares =
         toNumber(tempHolding?.shares) ??
-        (tempHolding?.amount && latestNav ? tempHolding.amount / latestNav : 0) ??
-        0;
+        (tempHolding?.amount && latestNav ? tempHolding.amount / latestNav : 0);
 
       if (item.type === 'reduce' && method === 'shares' && baseShares <= 0) continue;
       if (item.type === 'reduce' && method === 'amount' && baseAmount <= 0) continue;

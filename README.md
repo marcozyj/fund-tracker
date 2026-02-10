@@ -1,3 +1,11 @@
+![GitHub Actions](https://github.com/marcozyj/fund-tracker/actions/workflows/deploy-pages.yml/badge.svg?branch=main)
+![GitHub Repo stars](https://img.shields.io/github/stars/marcozyj/fund-tracker?style=flat-square)
+![GitHub forks](https://img.shields.io/github/forks/marcozyj/fund-tracker?style=flat-square)
+![GitHub issues](https://img.shields.io/github/issues/marcozyj/fund-tracker?style=flat-square)
+![GitHub last commit](https://img.shields.io/github/last-commit/marcozyj/fund-tracker?style=flat-square)
+![GitHub license](https://img.shields.io/github/license/marcozyj/fund-tracker?style=flat-square)
+![Repo views](https://komarev.com/ghpvc/?username=marcozyj&repo=fund-tracker&style=flat-square)
+
 # 基金看板项目
 
 ## 用途

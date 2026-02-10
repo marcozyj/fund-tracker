@@ -1,4 +1,7 @@
+import { NextRequest } from 'next/server';
 import { getFundHistory, normalizeCode } from '../../../lib/fund';
+
+export const dynamic = 'force-static';
 
 const PERIOD_OFFSETS: Record<string, number> = {
   week: 5,
@@ -7,7 +10,10 @@ const PERIOD_OFFSETS: Record<string, number> = {
   year: 252
 };
 
-export async function GET(request: Request) {
+export async function GET(
+  request: NextRequest,
+  _context: { params: Promise<Record<string, string>> }
+) {
   const { searchParams } = new URL(request.url);
   const period = searchParams.get('period') || 'month';
   const limitParam = Number(searchParams.get('limit') || '10');

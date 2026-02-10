@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "cross-env NEXT_DISABLE_DEV_INDICATOR=1 NEXT_DISABLE_DEV_TOOLBAR=1 next dev",
     "build": "next build",
+    "build:pages": "node scripts/build-pages.mjs",
     "start": "next start",
     "lint": "next lint"
   },

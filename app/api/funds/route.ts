@@ -1,6 +1,12 @@
+import { NextRequest } from 'next/server';
 import { searchFunds } from '../../../lib/fund';
 
-export async function GET(request: Request) {
+export const dynamic = 'force-static';
+
+export async function GET(
+  request: NextRequest,
+  _context: { params: Promise<Record<string, string>> }
+) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q') || '';
   const limit = Number(searchParams.get('limit') || '50');
