@@ -87,6 +87,23 @@
       flex-wrap: wrap;
     }
 
+    .refresh-select {
+      display: flex;
+      align-items: center;
+    }
+
+    .refresh-select select {
+      border: 1px solid var(--glass-border);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-family: var(--font-body);
+      font-size: 12px;
+      background: var(--glass-strong);
+      color: var(--text);
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.7), 0 6px 16px rgba(15, 23, 42, 0.08);
+      outline: none;
+    }
+
     .search-box {
       position: relative;
       display: flex;
@@ -553,22 +570,44 @@
     }
 
     .raw-html--positions {
+      border-radius: 16px;
+      border: 1px solid var(--glass-border);
+      background: rgba(255, 255, 255, 0.7);
+      padding: 12px;
       max-height: none;
       overflow: visible;
     }
 
     .raw-html--positions table {
-      white-space: nowrap;
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
     }
 
     .raw-html--positions th,
     .raw-html--positions td {
       white-space: nowrap;
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
     }
 
     .positions-table th,
     .positions-table td {
       font-size: 12px;
+    }
+
+    .raw-html--positions th {
+      font-weight: 600;
+      color: var(--muted);
+      background: rgba(248, 250, 252, 0.85);
+    }
+
+    .raw-html--positions tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .raw-html--positions tr:nth-child(even) {
+      background: transparent;
     }
 
     .raw-html--history {

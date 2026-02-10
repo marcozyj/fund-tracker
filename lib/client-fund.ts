@@ -31,6 +31,9 @@ const FUND_HISTORY_TABLE_URL = 'https://fund.eastmoney.com/f10/F10DataApi.aspx?t
 const FUND_FEE_API_URL = 'https://fund.eastmoney.com/f10/F10DataApi.aspx?type=jjfl';
 const FUND_JDZF_URL = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jdzf';
 const FUND_POSITION_URL = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc';
+const TT_POSITION_URL = 'https://dgs.tiantianfunds.com/merge/m/api/jjxqy2';
+const TT_POSITION_DEVICE_ID = '9a8d612d1a2229b7bf0ffd5ca823d790';
+const TT_POSITION_VALIDMARK = '9a8d612d1a2229b7bf0ffd5ca823d790';
 const FUND_SEARCH_URL =
   'https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key=';
 const STOCK_QUOTE_URL = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
@@ -109,6 +112,17 @@ function loadJsonp(url: string, timeoutMs = 8000): Promise<any | null> {
     };
     document.body.appendChild(script);
   });
+}
+
+async function fetchJsonPost(url: string, body: string, headers?: Record<string, string>) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...(headers || {}) },
+    body,
+    cache: 'no-store'
+  });
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return res.json();
 }
 
 function queueTask<T>(queue: Promise<unknown>, task: () => Promise<T>) {
@@ -221,6 +235,265 @@ function parsePercentText(text: string): number | null {
   if (!match) return null;
   const value = Number(match[0]);
   return Number.isFinite(value) ? value : null;
+}
+
+function parsePositionDateFromContent(content: string) {
+  if (!content) return '';
+  const dateMatch = content.match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+  if (dateMatch) {
+    const year = dateMatch[1];
+    const month = dateMatch[2].padStart(2, '0');
+    const day = dateMatch[3].padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  const quarterMatch = content.match(/(\d{4})年(\d{1,2})季度/);
+  if (quarterMatch) {
+    const year = quarterMatch[1];
+    const quarter = Number(quarterMatch[2]);
+    if (Number.isFinite(quarter) && quarter >= 1 && quarter <= 4) {
+      const month = String(quarter * 3).padStart(2, '0');
+      const day = quarter === 1 || quarter === 4 ? '31' : '30';
+      return `${year}-${month}-${day}`;
+    }
+  }
+  return '';
+}
+
+function quarterEndDate(year: number, quarter: number) {
+  const month = String(quarter * 3).padStart(2, '0');
+  const day = quarter === 1 || quarter === 4 ? '31' : '30';
+  return `${year}-${month}-${day}`;
+}
+
+function previousQuarterFromDate(date: string) {
+  const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  let year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  let prevMonth = 12;
+  if (month >= 10) prevMonth = 9;
+  else if (month >= 7) prevMonth = 6;
+  else if (month >= 4) prevMonth = 3;
+  else {
+    prevMonth = 12;
+    year -= 1;
+  }
+  return { year, month: prevMonth };
+}
+
+function extractCodeFromPositionRow(row: Element) {
+  const html = row.innerHTML;
+  const secidMatch = html.match(/unify\/r\/(\d+)\.([A-Za-z0-9]+)/i);
+  if (secidMatch && secidMatch[2]) return secidMatch[2].toUpperCase();
+  const ccmxMatch = html.match(/ccmx_(\d{6})/);
+  if (ccmxMatch && ccmxMatch[1]) return ccmxMatch[1];
+  const text = row.textContent || '';
+  const sixMatch = text.match(/\b\d{6}\b/);
+  if (sixMatch) return sixMatch[0];
+  const fiveMatch = text.match(/\b\d{5}\b/);
+  if (fiveMatch) return fiveMatch[0];
+  const tickerMatch = text.match(/\b[A-Z]{1,6}\b/);
+  if (tickerMatch) return tickerMatch[0].toUpperCase();
+  return '';
+}
+
+function extractSecidFromPositionRow(row: Element) {
+  const html = row.innerHTML;
+  const secidMatch = html.match(/unify\/r\/(\d+)\.([A-Za-z0-9]+)/i);
+  if (!secidMatch) return '';
+  const market = secidMatch[1];
+  const code = secidMatch[2];
+  if (!market || !code) return '';
+  return `${market}.${code.toUpperCase()}`;
+}
+
+function parseSecidMapFromContent(content: string) {
+  if (!content) return new Map<string, string>();
+  const map = new Map<string, string>();
+  const regex = /(\d{1,3})\.([A-Za-z]{1,6}|\d{4,6})/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(content))) {
+    const market = match[1];
+    const code = match[2].toUpperCase();
+    if (!market || !code) continue;
+    map.set(code, `${market}.${code}`);
+  }
+  return map;
+}
+
+function parsePositionHoldingsFromContent(content: string) {
+  if (!content || typeof DOMParser === 'undefined') return [];
+  const doc = new DOMParser().parseFromString(content, 'text/html');
+  const tables = Array.from(doc.querySelectorAll('table'));
+  if (!tables.length) return [];
+
+  const secidMap = parseSecidMapFromContent(content);
+  const normalizeText = (value: string) => value.replace(/\s+/g, '').trim();
+  const target =
+    tables.find((table) => {
+      const header = table.querySelector('tr');
+      if (!header) return false;
+      const text = normalizeText(header.textContent || '');
+      return text.includes('股票代码') || text.includes('股票名称') || text.includes('股票简称');
+    }) || tables[0];
+
+  const rows = Array.from(target.querySelectorAll('tr'));
+  if (!rows.length) return [];
+  const headerRow =
+    rows.find((row) => (row.textContent || '').includes('股票代码')) || rows[0];
+  const headerCells = Array.from(headerRow.children);
+  const headerTexts = headerCells.map((cell) => normalizeText(cell.textContent || ''));
+
+  const findHeaderIndex = (predicates: string[]) =>
+    headerTexts.findIndex((text) => predicates.some((key) => text.includes(key)));
+
+  const codeIndex = findHeaderIndex(['股票代码', '代码']);
+  const nameIndex = findHeaderIndex(['股票名称', '股票简称', '名称', '简称']);
+  const weightIndex = findHeaderIndex(['占净值', '占净值比例', '持仓占比', '占资产']);
+  const changeIndex = findHeaderIndex(['涨跌幅', '涨幅', '跌幅', '涨跌']);
+
+  const parsePercentCell = (text: string) => {
+    if (!text) return null;
+    if (!/%|％/.test(text)) return null;
+    const value = parsePercentText(text);
+    if (value === null || !Number.isFinite(value)) return null;
+    if (value < -100 || value > 100) return null;
+    return value;
+  };
+
+  const holdings: {
+    code: string;
+    name: string;
+    weight: number | null;
+    secid?: string;
+  }[] = [];
+
+  rows.forEach((row, idx) => {
+    if (idx === rows.indexOf(headerRow)) return;
+    if (row.querySelector('th')) return;
+    const cells = Array.from(row.children);
+    if (!cells.length) return;
+    const code = extractCodeFromPositionRow(row) || (cells[codeIndex]?.textContent || '').trim();
+    const name =
+      (cells[nameIndex]?.textContent || '').trim() ||
+      (codeIndex >= 0 ? (cells[codeIndex + 1]?.textContent || '').trim() : '');
+    if (!code && !name) return;
+    let weight: number | null = null;
+    if (weightIndex >= 0 && weightIndex < cells.length) {
+      const weightText = cells[weightIndex]?.textContent || '';
+      weight = parsePercentCell(weightText);
+    }
+    if (weight === null) {
+      const candidates = cells
+        .map((cell, index) => ({
+          index,
+          value: parsePercentCell(cell.textContent || '')
+        }))
+        .filter((item) => item.value !== null) as { index: number; value: number }[];
+      const filtered = changeIndex >= 0 ? candidates.filter((item) => item.index !== changeIndex) : candidates;
+      const picked = filtered.length ? filtered[filtered.length - 1] : candidates[candidates.length - 1];
+      if (picked) weight = picked.value;
+    }
+    const secid = extractSecidFromPositionRow(row) || secidMap.get(code.toUpperCase()) || '';
+    holdings.push({
+      code: code.toUpperCase(),
+      name,
+      weight,
+      secid: secid || undefined
+    });
+  });
+
+  return holdings;
+}
+
+function parseQuarterPositionSections(content: string) {
+  if (!content) return [];
+  const sections: { date: string; holdings: ReturnType<typeof parsePositionHoldingsFromContent> }[] = [];
+  const regex = /(\d{4})年(\d{1,2})季度[^<>]*?投资明细/g;
+  const matches: { index: number; year: number; quarter: number }[] = [];
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(content))) {
+    matches.push({
+      index: match.index,
+      year: Number(match[1]),
+      quarter: Number(match[2])
+    });
+  }
+
+  if (!matches.length) {
+    const holdings = parsePositionHoldingsFromContent(content);
+    if (holdings.length) {
+      sections.push({ date: parsePositionDateFromContent(content), holdings });
+    }
+    return sections;
+  }
+
+  matches.forEach((item, idx) => {
+    const start = item.index;
+    const end = idx + 1 < matches.length ? matches[idx + 1].index : content.length;
+    const chunk = content.slice(start, end);
+    const holdings = parsePositionHoldingsFromContent(chunk);
+    if (!holdings.length) return;
+    let date = parsePositionDateFromContent(chunk);
+    if (!date && Number.isFinite(item.year) && Number.isFinite(item.quarter)) {
+      date = quarterEndDate(item.year, item.quarter);
+    }
+    sections.push({ date, holdings });
+  });
+
+  return sections;
+}
+
+function applyHoldingChanges(
+  latest: { code: string; name: string; weight: number | null; secid?: string }[],
+  previous: { code: string; weight: number | null }[],
+  hasPrevious = previous.length > 0
+) {
+  if (!hasPrevious) {
+    return latest.map((item) => ({
+      ...item,
+      change: null,
+      changeType: ''
+    }));
+  }
+  const prevMap = new Map<string, number | null>();
+  previous.forEach((item) => {
+    if (!item.code) return;
+    prevMap.set(item.code.toUpperCase(), item.weight ?? null);
+  });
+
+  return latest.map((item) => {
+    const prevWeight = prevMap.get(item.code.toUpperCase());
+    if (prevWeight === undefined) {
+      return {
+        ...item,
+        change: null,
+        changeType: '新增'
+      };
+    }
+    const nextWeight = item.weight ?? null;
+    if (prevWeight === null || nextWeight === null || !Number.isFinite(nextWeight)) {
+      return {
+        ...item,
+        change: null,
+        changeType: ''
+      };
+    }
+    const delta = Number((nextWeight - prevWeight).toFixed(2));
+    if (Math.abs(delta) < 0.01) {
+      return {
+        ...item,
+        change: 0,
+        changeType: '持平'
+      };
+    }
+    return {
+      ...item,
+      change: delta,
+      changeType: delta > 0 ? '增持' : '减持'
+    };
+  });
 }
 
 function parseRankText(text: string) {
@@ -401,21 +674,25 @@ export async function getFundSummaryClient(code: string) {
     // ignore
   }
 
-  if (!latestNav || !latestDate) {
-    try {
-      const history = await getFundHistoryClient(normalized, 30);
-      if (!name) name = history.name || normalized;
-      const last = history.history[history.history.length - 1];
-      if (last) {
+  try {
+    const history = await getFundHistoryClient(normalized, 60);
+    if (!name) name = history.name || normalized;
+    const last = history.history[history.history.length - 1];
+    if (last) {
+      if (!latestDate || last.date > latestDate) {
         latestNav = last.nav;
         latestDate = last.date;
-        updateTime = last.date || updateTime;
-        if (last.daily_growth_rate !== undefined) estPct = last.daily_growth_rate;
         estNav = latestNav;
+        estPct = last.daily_growth_rate ?? estPct;
+        if (!updateTime || updateTime < last.date) {
+          updateTime = last.date;
+        }
+      } else if (last.date === latestDate && estPct === null && last.daily_growth_rate !== undefined) {
+        estPct = last.daily_growth_rate;
       }
-    } catch {
-      // ignore
     }
+  } catch {
+    // ignore
   }
 
   const feeRate = await getFundFeeRateClient(normalized);
@@ -471,16 +748,112 @@ export async function getFundPerformanceClient(code: string, period?: string | n
 export async function getFundPositionsClient(code: string): Promise<FundPositionData | null> {
   const normalized = normalizeCode(code);
   if (!normalized) return null;
-  const url = `${FUND_POSITION_URL}&code=${normalized}&topline=10&year=&month=&_=${Date.now()}`;
+  try {
+    const params = new URLSearchParams();
+    params.set('deviceid', TT_POSITION_DEVICE_ID);
+    params.set('version', '9.9.9');
+    params.set('appVersion', '6.5.5');
+    params.set('product', 'EFund');
+    params.set('plat', 'Web');
+    params.set('uid', '');
+    params.set('fcode', normalized);
+
+    const ttData = await fetchJsonPost(TT_POSITION_URL, params.toString(), {
+      validmark: TT_POSITION_VALIDMARK
+    });
+    const fundStocks = ttData?.data?.fundInverstPosition?.fundStocks || [];
+    const date = ttData?.data?.FundXTChangeInfo?.holdDate || ttData?.data?.expansion || '';
+    if (Array.isArray(fundStocks) && fundStocks.length) {
+      const holdings = fundStocks.map((item: any) => {
+        const code = String(item?.GPDM || '').trim().toUpperCase();
+        const market = String(item?.NEWTEXCH || '').trim();
+        let secid = '';
+        if (market && code) secid = `${market}.${code}`;
+        else if (/^\d{6}$/.test(code)) secid = code.startsWith('6') ? `1.${code}` : `0.${code}`;
+        return {
+          code,
+          name: String(item?.GPJC || '').trim(),
+          market,
+          weight: toNumber(item?.JZBL),
+          change: toNumber(item?.PCTNVCHG),
+          changeType: item?.PCTNVCHGTYPE ? String(item.PCTNVCHGTYPE) : '',
+          secid
+        };
+      });
+      const codes = holdings.map((item) => item.secid || item.code).filter(Boolean);
+      const quotes = codes.length ? await getStockQuotesClient(codes) : {};
+      return {
+        content: '',
+        years: [],
+        currentYear: '',
+        holdings,
+        date,
+        source: '天天基金',
+        quotes
+      };
+    }
+  } catch {
+    // fall through to eastmoney
+  }
+
+  const url = `${FUND_POSITION_URL}&code=${normalized}&topline=10&year=&month=&rt=${Date.now()}`;
   const data = await loadApidata(url);
   if (!data) return null;
+  const content = data.content || '';
+  const sections = parseQuarterPositionSections(content);
+  if (!sections.length) {
+    return {
+      content,
+      years: [],
+      currentYear: '',
+      holdings: [],
+      date: parsePositionDateFromContent(content),
+      source: '东方财富'
+    };
+  }
+
+  const sorted = sections
+    .filter((item) => item.date)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const latest = sorted[0] || sections[0];
+  let previous = sorted[1];
+  let hasPrevious = Boolean(previous && previous.holdings.length);
+
+  if (!previous && latest?.date) {
+    const prevQuarter = previousQuarterFromDate(latest.date);
+    if (prevQuarter) {
+      const prevUrl = `${FUND_POSITION_URL}&code=${normalized}&topline=10&year=${prevQuarter.year}&month=${prevQuarter.month}&rt=${Date.now()}`;
+      const prevData = await loadApidata(prevUrl);
+      const prevContent = prevData?.content || '';
+      const prevSections = parseQuarterPositionSections(prevContent);
+      if (prevSections.length) {
+        const prevSorted = prevSections
+          .filter((item) => item.date)
+          .sort((a, b) => b.date.localeCompare(a.date));
+        previous = prevSorted[0] || prevSections[0];
+        hasPrevious = Boolean(previous && previous.holdings.length);
+      }
+    }
+  }
+
+  const prevHoldings = previous
+    ? previous.holdings.map((item) => ({
+        code: item.code,
+        weight: item.weight ?? null
+      }))
+    : [];
+  const enrichedHoldings = applyHoldingChanges(latest.holdings, prevHoldings, hasPrevious);
+  const codes = enrichedHoldings.map((item) => item.secid || item.code).filter(Boolean);
+  const quotes = codes.length ? await getStockQuotesClient(codes) : {};
+
   return {
-    content: data.content || '',
+    content,
     years: [],
     currentYear: '',
-    holdings: [],
-    date: '',
-    source: '东方财富'
+    holdings: enrichedHoldings,
+    date: latest.date,
+    source: '东方财富',
+    quotes
   };
 }
 

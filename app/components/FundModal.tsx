@@ -1349,111 +1349,146 @@ async function enhancePositionTable(root: HTMLDivElement, quotes: Record<string,
   }
   if (!root.isConnected) return;
 
-  rows.forEach((row) => {
-    const links = Array.from(row.querySelectorAll('a'));
-    links.forEach((link) => {
-      if ((link.textContent || '').includes('股吧')) {
-        link.remove();
-      }
-    });
-
-    const infoLinks = Array.from(row.querySelectorAll('td a')).filter((link) => {
-      const text = (link.textContent || '').trim();
-      return text === '变动详情' || text === '行情';
-    });
-    if (infoLinks.length >= 2) {
-      const divider = document.createElement('span');
-      divider.textContent = ' | ';
-      infoLinks[0].after(divider);
-    }
-  });
+  const normalizeText = (value: string) => value.replace(/\s+/g, '').trim();
+  const parsePctValue = (value: string) => {
+    if (!/%|％/.test(value)) return null;
+    const match = value.replace(/,/g, '').match(/[-+]?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const num = Number(match[0]);
+    if (!Number.isFinite(num)) return null;
+    if (num < -100 || num > 100) return null;
+    return num;
+  };
 
   const headerRow =
     rows.find((row) => (row.textContent || '').includes('股票代码')) || rows[0];
   if (!headerRow) return;
-
-  const headerFirstCell = headerRow.children[0] as HTMLElement | undefined;
-  const shouldRemoveIndex = headerFirstCell
-    ? (headerFirstCell.textContent || '').replace(/\s+/g, '').includes('序号')
-    : false;
-
-  if (shouldRemoveIndex) {
-    rows.forEach((row) => {
-      const firstCell = row.children[0];
-      if (firstCell) {
-        row.removeChild(firstCell);
-      }
-    });
-  }
-
+  const headerIndex = rows.indexOf(headerRow);
   const headerCells = Array.from(headerRow.children);
-  const removeIndexes: number[] = [];
-  headerCells.forEach((cell, idx) => {
-    const text = (cell.textContent || '').replace(/\s+/g, '');
-    if (text.includes('最新价') || text.includes('涨跌幅')) {
-      removeIndexes.push(idx);
-    }
+  const headerTexts = headerCells.map((cell) => normalizeText(cell.textContent || ''));
+
+  const findHeaderIndex = (predicates: string[], excludes: string[] = []) =>
+    headerTexts.findIndex(
+      (text) =>
+        predicates.some((key) => text.includes(key)) &&
+        !excludes.some((exclude) => text.includes(exclude))
+    );
+
+  const codeIndex = findHeaderIndex(['股票代码', '代码']);
+  const nameIndex = findHeaderIndex(['股票名称', '名称', '简称']);
+  const pctIndex = findHeaderIndex(['涨跌幅', '涨跌']);
+  const weightIndex = findHeaderIndex(['占净值', '占净值比例', '持仓占比']);
+  const changeIndex = findHeaderIndex(
+    ['变动', '较上期', '持仓变动', '持仓变化', '增减', '变化'],
+    ['详情', '明细', '查看']
+  );
+
+  const getCellText = (cells: Element[], idx: number) =>
+    idx >= 0 && cells[idx] ? (cells[idx].textContent || '').trim() : '';
+
+  const newTable = document.createElement('table');
+  newTable.className = 'positions-table';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['股票代码', '股票名称', '涨跌幅', '占净值比例', '变动'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
   });
+  thead.appendChild(headRow);
+  newTable.appendChild(thead);
 
-  removeIndexes.sort((a, b) => b - a);
-  if (removeIndexes.length) {
-    rows.forEach((row) => {
-      removeIndexes.forEach((idx) => {
-        const cell = row.children[idx];
-        if (cell) row.removeChild(cell);
-      });
-    });
-  }
+  const tbody = document.createElement('tbody');
+  rows.slice(headerIndex + 1).forEach((row) => {
+    if (row.querySelector('th')) return;
+    const cells = Array.from(row.children);
+    if (!cells.length) return;
 
-  const headerCellsAfter = Array.from(headerRow.children);
-  const insertAtIndex = (() => {
-    const targetIndex = headerCellsAfter.findIndex((cell) => {
-      const text = (cell.textContent || '').replace(/\s+/g, '');
-      return text.includes('占净值') || text.includes('持仓占比');
-    });
-    return targetIndex >= 0 ? targetIndex : headerRow.children.length;
-  })();
+    const code = extractCodeFromRow(row) || getCellText(cells, codeIndex);
+    let name = getCellText(cells, nameIndex);
+    if (!name && codeIndex >= 0) {
+      name = getCellText(cells, codeIndex + 1);
+    }
+    if (!code && !name) return;
 
-  const priceTh = document.createElement('th');
-  priceTh.textContent = '最新价';
-  priceTh.setAttribute('data-quote', 'price');
-  const pctTh = document.createElement('th');
-  pctTh.textContent = '涨跌幅';
-  pctTh.setAttribute('data-quote', 'pct');
-
-  const headerInsertRef = headerRow.children[insertAtIndex] || null;
-  headerRow.insertBefore(priceTh, headerInsertRef);
-  headerRow.insertBefore(pctTh, headerInsertRef);
-
-  rows.slice(1).forEach((row) => {
-    const code = extractCodeFromRow(row);
-    if (!code) return;
-    const quote = resolvedQuotes[code] || null;
-    const priceCell = document.createElement('td');
-    priceCell.setAttribute('data-quote', 'price');
-    const pctCell = document.createElement('td');
-    pctCell.setAttribute('data-quote', 'pct');
-
-    if (quote?.price !== null && quote?.price !== undefined && Number.isFinite(quote.price)) {
-      priceCell.textContent = quote.price.toFixed(2);
-    } else {
-      priceCell.textContent = '--';
+    let pctText = getCellText(cells, pctIndex);
+    let pctValue = parsePctValue(pctText);
+    if (pctValue === null) {
+      const quote = code ? resolvedQuotes[code] : null;
+      if (quote?.pct !== null && quote?.pct !== undefined && Number.isFinite(quote.pct)) {
+        pctValue = quote.pct;
+      }
+    }
+    const weightText = getCellText(cells, weightIndex);
+    const weightValue = parsePctValue(weightText);
+    let changeText = getCellText(cells, changeIndex);
+    const changeLabel = changeText.replace(/\s+/g, '');
+    if (changeLabel.includes('详情') || changeLabel.includes('查看')) {
+      changeText = '';
     }
 
-    if (quote?.pct !== null && quote?.pct !== undefined && Number.isFinite(quote.pct)) {
-      pctCell.textContent = `${quote.pct > 0 ? '+' : ''}${quote.pct.toFixed(2)}%`;
-      pctCell.className = quote.pct > 0 ? 'market-up' : quote.pct < 0 ? 'market-down' : 'market-flat';
+    const rowEl = document.createElement('tr');
+    const codeCell = document.createElement('td');
+    codeCell.textContent = code || '--';
+    rowEl.appendChild(codeCell);
+
+    const nameCell = document.createElement('td');
+    nameCell.textContent = name || '--';
+    rowEl.appendChild(nameCell);
+
+    const pctCell = document.createElement('td');
+    if (pctValue !== null) {
+      pctCell.textContent = `${pctValue > 0 ? '+' : ''}${pctValue.toFixed(2)}%`;
+      pctCell.className = pctValue > 0 ? 'market-up' : pctValue < 0 ? 'market-down' : 'market-flat';
     } else {
       pctCell.textContent = '--';
-      pctCell.className = '';
     }
+    rowEl.appendChild(pctCell);
 
-    const rowInsertRef = row.children[insertAtIndex] || null;
-    row.insertBefore(priceCell, rowInsertRef);
-    row.insertBefore(pctCell, rowInsertRef);
+    const weightCell = document.createElement('td');
+    weightCell.textContent = weightText || '--';
+    rowEl.appendChild(weightCell);
+
+    const changeCell = document.createElement('td');
+    if (changeLabel.includes('新增') || changeLabel.includes('新进')) {
+      changeCell.textContent = '新增';
+      changeCell.className = 'market-up';
+    } else if (changeLabel.includes('退出') || changeLabel.includes('清仓')) {
+      changeCell.textContent = changeLabel.includes('清仓') ? '清仓' : '退出';
+      changeCell.className = 'market-down';
+    } else {
+      let changeValue = parsePctValue(changeText);
+      if (changeValue === null) {
+        const rowValues = cells
+          .map((cell) => parsePctValue(cell.textContent || ''))
+          .filter((value): value is number => value !== null);
+        const fallback = rowValues.filter((value) => {
+          if (pctValue !== null && Math.abs(value - pctValue) < 0.001) return false;
+          if (weightValue !== null && Math.abs(value - weightValue) < 0.001) return false;
+          return true;
+        });
+        if (fallback.length) {
+          changeValue = fallback[fallback.length - 1];
+        }
+      }
+
+      if (changeValue !== null) {
+        changeCell.textContent = `${changeValue > 0 ? '+' : ''}${changeValue.toFixed(2)}%`;
+        changeCell.className =
+          changeValue > 0 ? 'market-up' : changeValue < 0 ? 'market-down' : 'market-flat';
+      } else {
+        changeCell.textContent = changeText || '--';
+      }
+    }
+    rowEl.appendChild(changeCell);
+
+    tbody.appendChild(rowEl);
   });
 
-  table.setAttribute('data-enhanced', 'true');
+  newTable.appendChild(tbody);
+  root.innerHTML = '';
+  root.appendChild(newTable);
+  newTable.setAttribute('data-enhanced', 'true');
 }
 
 function extractCodeFromRow(row: Element) {

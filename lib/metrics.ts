@@ -71,13 +71,35 @@ export function computeHoldingView(holding: Holding, data: FundData | undefined 
       costUnit: costPrice
     };
   }
-  const amount = toNumber(holding.amount);
-  const profit = toNumber(holding.profit);
-  const costUnit = latestNav ? computeCostUnit(amount, profit, latestNav) : null;
+  const amountValue = toNumber(holding.amount);
+  const profitValue = toNumber(holding.profit);
+  const shares = toNumber(holding.shares);
+  const costPrice = toNumber(holding.costPrice);
+
+  let costBasis: number | null = null;
+  if (shares !== null && costPrice !== null) {
+    costBasis = shares * costPrice;
+  } else if (amountValue !== null && profitValue !== null) {
+    costBasis = amountValue - profitValue;
+  }
+
+  if (shares !== null && latestNav !== null) {
+    const amount = Number((shares * latestNav).toFixed(2));
+    const profit = costBasis !== null ? Number((amount - costBasis).toFixed(2)) : profitValue;
+    const costUnit = costBasis !== null && shares ? costBasis / shares : computeCostUnit(amount, profit, latestNav);
+    return {
+      method,
+      amount,
+      profit,
+      costUnit
+    };
+  }
+
+  const costUnit = latestNav ? computeCostUnit(amountValue, profitValue, latestNav) : null;
   return {
     method,
-    amount,
-    profit,
+    amount: amountValue,
+    profit: profitValue,
     costUnit
   };
 }

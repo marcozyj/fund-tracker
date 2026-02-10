@@ -38,6 +38,13 @@ const STORAGE_KEYS = {
 const LEGACY_KEY = 'steadyfund_portfolio';
 const DEFAULT_WATCHLIST = ['161725', '001632', '005963'];
 const USE_DIRECT_API = true;
+const REFRESH_INTERVAL_KEY = 'fund-tracker-refresh-interval';
+const REFRESH_INTERVALS = [
+  { label: '5秒', value: 5000 },
+  { label: '1分钟', value: 60000 },
+  { label: '10分钟', value: 600000 }
+];
+const DEFAULT_REFRESH_INTERVAL = 60000;
 
 const CN_TIMEZONE = 'Asia/Shanghai';
 const cnFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -168,6 +175,7 @@ export default function AppShell() {
   const [operations, setOperations] = useState<FundOperation[]>([]);
   const [fundCache, setFundCache] = useState<Record<string, FundData>>({});
   const [loading, setLoading] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState<number>(DEFAULT_REFRESH_INTERVAL);
   const [showRate, setShowRate] = useState(false);
   const [positionCache, setPositionCache] = useState<Record<string, FundPositionData | null>>({});
   const [historyTableCache, setHistoryTableCache] = useState<Record<string, FundHistoryTableData | null>>({});
@@ -227,6 +235,21 @@ export default function AppShell() {
   useEffect(() => {
     historyCacheRef.current = historyTableCache;
   }, [historyTableCache]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(REFRESH_INTERVAL_KEY);
+    if (!saved) return;
+    const value = Number(saved);
+    if (Number.isFinite(value) && REFRESH_INTERVALS.some((item) => item.value === value)) {
+      setRefreshInterval(value);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(REFRESH_INTERVAL_KEY, String(refreshInterval));
+  }, [refreshInterval]);
 
   const selectedData = selectedCode ? fundCache[selectedCode] : null;
   const selectedHolding = selectedCode ? holdings.find((item) => item.code === selectedCode) || null : null;
@@ -354,6 +377,38 @@ export default function AppShell() {
   }, [holdings, watchlist, operations]);
 
   useEffect(() => {
+    if (!holdings.length) return;
+    setHoldings((prev) => {
+      let changed = false;
+      const next = prev.map((holding) => {
+        if (holding.method !== 'amount') return holding;
+        if (holding.shares !== null && holding.shares !== undefined && holding.costPrice !== null && holding.costPrice !== undefined) {
+          return holding;
+        }
+        const data = fundCache[holding.code];
+        const latestNav = data?.latestNav ?? null;
+        if (!latestNav) return holding;
+        const amount = toNumber(holding.amount);
+        if (amount === null) return holding;
+        const profit = toNumber(holding.profit);
+        const nextShares = holding.shares ?? Number((amount / latestNav).toFixed(2));
+        const nextCostPrice =
+          holding.costPrice ?? computeCostUnit(amount, profit, latestNav);
+        if (nextShares === holding.shares && nextCostPrice === holding.costPrice) {
+          return holding;
+        }
+        changed = true;
+        return {
+          ...holding,
+          shares: nextShares,
+          costPrice: nextCostPrice
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [fundCache, holdings]);
+
+  useEffect(() => {
     if (!initializedRef.current) return;
     if (feeNormalizedRef.current) return;
     const hasMissing = operations.some(
@@ -377,6 +432,16 @@ export default function AppShell() {
     if (!initializedRef.current) return;
     refreshData();
   }, [holdings, watchlist]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!holdings.length && !watchlist.length) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      refreshData();
+    }, refreshInterval);
+    return () => window.clearInterval(timer);
+  }, [refreshInterval, holdings.length, watchlist.length]);
 
   useEffect(() => {
     function updateStatus() {
@@ -2150,9 +2215,24 @@ export default function AppShell() {
               <span className="dot"></span> 数据拉取中
             </div>
           )}
-          <button className="btn secondary" id="refresh-btn" onClick={refreshData}>
-            刷新数据
-          </button>
+          <div className="refresh-select">
+            <select
+              aria-label="自动刷新频率"
+              value={refreshInterval}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (!Number.isFinite(value)) return;
+                setRefreshInterval(value);
+                refreshData();
+              }}
+            >
+              {REFRESH_INTERVALS.map((item) => (
+                <option key={item.value} value={item.value}>
+                  刷新频率 {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <button className="btn secondary" type="button" onClick={handleExport}>
             导出
           </button>
