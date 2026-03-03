@@ -15,6 +15,7 @@ import type {
 } from '../../lib/types';
 import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatPct } from '../../lib/utils';
 import { parseBatchText } from '../../lib/ocr';
+import { recognizeImage } from '../../lib/ocr-client';
 import { computeHoldingView, resolveDailyPct } from '../../lib/metrics';
 import Chart from './Chart';
 
@@ -127,6 +128,7 @@ export default function FundModal({
   const [batchItems, setBatchItems] = useState<BatchTradeInput[]>([]);
   const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
   const [batchEdits, setBatchEdits] = useState<Record<string, { amount: string; shares: string }>>({});
+  const [batchError, setBatchError] = useState('');
   const [buyForm, setBuyForm] = useState({
     amount: '',
     feeRate: '',
@@ -257,6 +259,7 @@ export default function FundModal({
     setBatchImage(null);
     setBatchPreview('');
     setOcrLoading(false);
+    setBatchError('');
   }, [batchOpen]);
 
   const handleBatchFileChange = (event: any) => {
@@ -266,6 +269,7 @@ export default function FundModal({
       setBatchPreview('');
       setBatchItems([]);
       setBatchSelected({});
+      setBatchError('');
       return;
     }
     const reader = new FileReader();
@@ -290,13 +294,15 @@ export default function FundModal({
 
   const handleOcr = async (file: File) => {
     setOcrLoading(true);
+    setBatchError('');
     try {
-      const Tesseract = await import('tesseract.js');
-      const result = await Tesseract.recognize(file, 'chi_sim');
-      const text = result?.data?.text || '';
+      const text = await recognizeImage(file);
       setOcrText(text);
       const items = parseBatchText(text);
       setBatchItems(items);
+      if (!items.length) {
+        setBatchError('未识别到交易记录，请换更清晰的截图');
+      }
       const edits: Record<string, { amount: string; shares: string }> = {};
       items.forEach((item) => {
         edits[item.id] = {
@@ -314,6 +320,7 @@ export default function FundModal({
       setOcrText('');
       setBatchItems([]);
       setBatchSelected({});
+      setBatchError('识别失败，请检查网络或换更清晰的截图');
     } finally {
       setOcrLoading(false);
     }
@@ -1099,6 +1106,7 @@ export default function FundModal({
                   </label>
                   {batchPreview ? <img className="batch-preview" src={batchPreview} alt="交易记录预览" /> : null}
                   {ocrLoading ? <div className="loading-indicator">识别中...</div> : null}
+                  {batchError ? <div className="error-text">{batchError}</div> : null}
                 </div>
                 <div className="batch-right">
                   <div className="batch-head">识别结果</div>

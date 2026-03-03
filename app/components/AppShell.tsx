@@ -26,6 +26,7 @@ import {
 import { classByValue, containsCjk, formatMoney, formatMoneyWithSymbol, formatPct, normalizeCode, toNumber } from '../../lib/utils';
 import { computeCostUnit, computeHoldingView, computeMetrics, resolveDailyPct } from '../../lib/metrics';
 import { detectFundFromText, parseBatchText } from '../../lib/ocr';
+import { recognizeImage } from '../../lib/ocr-client';
 import FundCard from './FundCard';
 import FundModal from './FundModal';
 
@@ -202,6 +203,7 @@ export default function AppShell() {
   const [quickImportItems, setQuickImportItems] = useState<BatchTradeInput[]>([]);
   const [quickImportSelected, setQuickImportSelected] = useState<Record<string, boolean>>({});
   const [quickImportEdits, setQuickImportEdits] = useState<Record<string, { amount: string; shares: string }>>({});
+  const [quickImportError, setQuickImportError] = useState('');
   const quickImportSearchTimerRef = useRef<number | null>(null);
 
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
@@ -1035,6 +1037,7 @@ export default function AppShell() {
     setQuickImportSelected({});
     setQuickImportEdits({});
     setQuickImportLoading(false);
+    setQuickImportError('');
     setQuickImportOpen(true);
   }
 
@@ -1044,6 +1047,7 @@ export default function AppShell() {
       quickImportSearchTimerRef.current = null;
     }
     setQuickImportOpen(false);
+    setQuickImportError('');
   }
 
   const shouldLookupFund = (query: string) => {
@@ -1115,6 +1119,7 @@ export default function AppShell() {
       setQuickImportEdits({});
       setQuickImportText('');
       setQuickImportDetected('');
+      setQuickImportError('');
       return;
     }
     const reader = new FileReader();
@@ -1127,13 +1132,15 @@ export default function AppShell() {
 
   const handleQuickOcr = async (file: File) => {
     setQuickImportLoading(true);
+    setQuickImportError('');
     try {
-      const Tesseract = await import('tesseract.js');
-      const result = await Tesseract.recognize(file, 'chi_sim');
-      const text = result?.data?.text || '';
+      const text = await recognizeImage(file);
       setQuickImportText(text);
       const items = parseBatchText(text);
       setQuickImportItems(items);
+      if (!items.length) {
+        setQuickImportError('未识别到交易记录，请换更清晰的截图');
+      }
       const edits: Record<string, { amount: string; shares: string }> = {};
       items.forEach((item) => {
         edits[item.id] = {
@@ -1176,6 +1183,7 @@ export default function AppShell() {
       setQuickImportEdits({});
       setQuickImportDetected('');
       setQuickImportResolved(null);
+      setQuickImportError('识别失败，请检查网络或换更清晰的截图');
     } finally {
       setQuickImportLoading(false);
     }
@@ -2450,6 +2458,7 @@ export default function AppShell() {
                   </label>
                   {quickImportPreview ? <img className="batch-preview" src={quickImportPreview} alt="交易记录预览" /> : null}
                   {quickImportLoading ? <div className="loading-indicator">识别中...</div> : null}
+                  {quickImportError ? <div className="error-text">{quickImportError}</div> : null}
                 </div>
                 <div className="batch-right">
                   <div className="batch-head">识别结果</div>
