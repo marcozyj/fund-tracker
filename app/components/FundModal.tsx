@@ -17,6 +17,7 @@ import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatP
 import { parseBatchText } from '../../lib/ocr';
 import { recognizeImage } from '../../lib/ocr-client';
 import { computeHoldingView, resolveDailyPct } from '../../lib/metrics';
+import { getStockQuotesClient } from '../../lib/client-fund';
 import Chart from './Chart';
 
 export default function FundModal({
@@ -148,13 +149,29 @@ export default function FundModal({
   const positionsMarkup = useMemo(() => ({ __html: positionsHtml }), [positionsHtml]);
   const holdingsList = positions?.holdings || [];
   const historyRows = useMemo(() => {
-    if (!historyTable?.content) return '';
-    const tableMatch = historyTable.content.match(/<table[^>]*>([\s\S]*?)<\/table>/i);
-    const tableHtml = tableMatch ? tableMatch[1] : historyTable.content;
-    const bodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
-    if (bodyMatch) return bodyMatch[1];
-    return tableHtml.replace(/<thead[\s\S]*?<\/thead>/i, '');
-  }, [historyTable?.content]);
+    if (historyTable?.content) {
+      const tableMatch = historyTable.content.match(/<table[^>]*>([\s\S]*?)<\/table>/i);
+      const tableHtml = tableMatch ? tableMatch[1] : historyTable.content;
+      const bodyMatch = tableHtml.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
+      if (bodyMatch) return bodyMatch[1];
+      return tableHtml.replace(/<thead[\s\S]*?<\/thead>/i, '');
+    }
+    if (!data?.history || data.history.length === 0) return '';
+    const rows = data.history
+      .slice()
+      .reverse()
+      .slice(0, 49)
+      .map((item) => {
+        const nav = Number(item.nav);
+        const acc = item.accumulated_value ?? nav;
+        const daily = item.daily_growth_rate;
+        const dailyText =
+          typeof daily === 'number' && Number.isFinite(daily) ? `${daily.toFixed(2)}%` : '--';
+        return `<tr><td>${item.date}</td><td class='tor bold'>${nav.toFixed(4)}</td><td class='tor bold'>${Number(acc).toFixed(4)}</td><td class='tor bold'>${dailyText}</td><td>--</td><td>--</td><td class='red unbold'></td></tr>`;
+      })
+      .join('');
+    return rows;
+  }, [historyTable?.content, data?.history]);
   const coloredHistoryRows = useMemo(() => {
     if (!historyRows) return '';
     if (typeof window === 'undefined') return historyRows;
@@ -410,16 +427,19 @@ export default function FundModal({
   const chartMarkers = useMemo(
     () =>
       operations
-        .filter((op) => (op.type === 'add' || op.type === 'reduce') && Boolean(op.date))
-        .map((op) => ({ date: op.date || '', type: op.type })),
+        .filter(
+          (op): op is FundOperation & { type: 'add' | 'reduce'; date: string } =>
+            (op.type === 'add' || op.type === 'reduce') && Boolean(op.date)
+        )
+        .map((op) => ({ date: op.date, type: op.type })),
     [operations]
   );
 
   useLayoutEffect(() => {
     if (!open) return;
-    if (!positionsHtml || !positions?.quotes || holdingsList.length) return;
+    if (!positionsHtml || holdingsList.length) return;
     if (!positionRef.current) return;
-    enhancePositionTable(positionRef.current, positions.quotes);
+    void enhancePositionTable(positionRef.current, positions?.quotes || {});
   }, [open, positionsHtml, positions?.quotes, holdingsList.length]);
 
   useEffect(() => {
@@ -453,24 +473,6 @@ export default function FundModal({
             <h4>基金状态</h4>
             {data ? (
               <>
-                <div className="fund-meta" id="modal-meta">
-                  <div className="meta-block">
-                    <span>最新净值</span>
-                    <strong>{formatNumber(data.latestNav)}</strong>
-                  </div>
-                  <div className="meta-block">
-                    <span>净值日期</span>
-                    <strong>{data.latestDate || '-'}</strong>
-                  </div>
-                  <div className="meta-block">
-                    <span>估值变动（参考）</span>
-                    <strong className={estClass}>{dailyPct !== null ? formatPct(dailyPct) : '--'}</strong>
-                  </div>
-                  <div className="meta-block">
-                    <span>更新时点</span>
-                    <strong>{data.updateTime || '-'}</strong>
-                  </div>
-                </div>
                 {holding ? (
                   <div className="holding-layout modal-holding">
                     <div className="holding-left">
@@ -512,6 +514,24 @@ export default function FundModal({
                     </div>
                   </div>
                 )}
+                <div className="fund-meta" id="modal-meta">
+                  <div className="meta-block">
+                    <span>最新净值</span>
+                    <strong>{formatNumber(data.latestNav)}</strong>
+                  </div>
+                  <div className="meta-block">
+                    <span>净值日期</span>
+                    <strong>{data.latestDate || '-'}</strong>
+                  </div>
+                  <div className="meta-block">
+                    <span>估值变动（参考）</span>
+                    <strong className={estClass}>{dailyPct !== null ? formatPct(dailyPct) : '--'}</strong>
+                  </div>
+                  <div className="meta-block">
+                    <span>更新时点</span>
+                    <strong>{data.updateTime || '-'}</strong>
+                  </div>
+                </div>
                 <div className="time-toggle metrics-toggle" id="metric-range">
                   {performancePeriods.map((item) => (
                     <button
@@ -1300,7 +1320,7 @@ function toQuarterTitle(date: string) {
   return `${year}年${quarter}季度股票投资明细`;
 }
 
-function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, StockQuote>) {
+async function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, StockQuote>) {
   const firstTable = root.querySelector('table');
   if (!firstTable) return;
   if (firstTable.getAttribute('data-enhanced') === 'true') return;
@@ -1314,89 +1334,159 @@ function enhancePositionTable(root: HTMLDivElement, quotes: Record<string, Stock
 
   const rows = Array.from(table.querySelectorAll('tr'));
   if (!rows.length) return;
-  const hasQuotes = Boolean(quotes && Object.keys(quotes).length);
-
-  rows.forEach((row) => {
-    const links = Array.from(row.querySelectorAll('a'));
-    links.forEach((link) => {
-      if ((link.textContent || '').includes('股吧')) {
-        link.remove();
+  let resolvedQuotes = quotes && Object.keys(quotes).length ? quotes : {};
+  if (!Object.keys(resolvedQuotes).length) {
+    const codes = rows.slice(1).map((row) => extractCodeFromRow(row)).filter(Boolean);
+    if (codes.length) {
+      try {
+        resolvedQuotes = await getStockQuotesClient(codes);
+      } catch {
+        resolvedQuotes = {};
       }
-    });
-
-    const infoLinks = Array.from(row.querySelectorAll('td a')).filter((link) => {
-      const text = (link.textContent || '').trim();
-      return text === '变动详情' || text === '行情';
-    });
-    if (infoLinks.length >= 2) {
-      const divider = document.createElement('span');
-      divider.textContent = ' | ';
-      infoLinks[0].after(divider);
     }
-  });
+  }
+  if (!root.isConnected) return;
+
+  const normalizeText = (value: string) => value.replace(/\s+/g, '').trim();
+  const parsePctValue = (value: string) => {
+    if (!/%|％/.test(value)) return null;
+    const match = value.replace(/,/g, '').match(/[-+]?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const num = Number(match[0]);
+    if (!Number.isFinite(num)) return null;
+    if (num < -100 || num > 100) return null;
+    return num;
+  };
 
   const headerRow =
     rows.find((row) => (row.textContent || '').includes('股票代码')) || rows[0];
   if (!headerRow) return;
-
-  const headerFirstCell = headerRow.children[0] as HTMLElement | undefined;
-  const shouldRemoveIndex = headerFirstCell
-    ? (headerFirstCell.textContent || '').replace(/\s+/g, '').includes('序号')
-    : false;
-
-  if (shouldRemoveIndex) {
-    rows.forEach((row) => {
-      const firstCell = row.children[0];
-      if (firstCell) {
-        row.removeChild(firstCell);
-      }
-    });
-  }
-
+  const headerIndex = rows.indexOf(headerRow);
   const headerCells = Array.from(headerRow.children);
-  const removeIndexes: number[] = [];
-  headerCells.forEach((cell, idx) => {
-    const text = (cell.textContent || '').replace(/\s+/g, '');
-    if (text.includes('最新价') || (hasQuotes && text.includes('涨跌幅'))) {
-      removeIndexes.push(idx);
+  const headerTexts = headerCells.map((cell) => normalizeText(cell.textContent || ''));
+
+  const findHeaderIndex = (predicates: string[], excludes: string[] = []) =>
+    headerTexts.findIndex(
+      (text) =>
+        predicates.some((key) => text.includes(key)) &&
+        !excludes.some((exclude) => text.includes(exclude))
+    );
+
+  const codeIndex = findHeaderIndex(['股票代码', '代码']);
+  const nameIndex = findHeaderIndex(['股票名称', '名称', '简称']);
+  const pctIndex = findHeaderIndex(['涨跌幅', '涨跌']);
+  const weightIndex = findHeaderIndex(['占净值', '占净值比例', '持仓占比']);
+  const changeIndex = findHeaderIndex(
+    ['变动', '较上期', '持仓变动', '持仓变化', '增减', '变化'],
+    ['详情', '明细', '查看']
+  );
+
+  const getCellText = (cells: Element[], idx: number) =>
+    idx >= 0 && cells[idx] ? (cells[idx].textContent || '').trim() : '';
+
+  const newTable = document.createElement('table');
+  newTable.className = 'positions-table';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['股票代码', '股票名称', '涨跌幅', '占净值比例', '变动'].forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  newTable.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  rows.slice(headerIndex + 1).forEach((row) => {
+    if (row.querySelector('th')) return;
+    const cells = Array.from(row.children);
+    if (!cells.length) return;
+
+    const code = extractCodeFromRow(row) || getCellText(cells, codeIndex);
+    let name = getCellText(cells, nameIndex);
+    if (!name && codeIndex >= 0) {
+      name = getCellText(cells, codeIndex + 1);
     }
+    if (!code && !name) return;
+
+    let pctText = getCellText(cells, pctIndex);
+    let pctValue = parsePctValue(pctText);
+    if (pctValue === null) {
+      const quote = code ? resolvedQuotes[code] : null;
+      if (quote?.pct !== null && quote?.pct !== undefined && Number.isFinite(quote.pct)) {
+        pctValue = quote.pct;
+      }
+    }
+    const weightText = getCellText(cells, weightIndex);
+    const weightValue = parsePctValue(weightText);
+    let changeText = getCellText(cells, changeIndex);
+    const changeLabel = changeText.replace(/\s+/g, '');
+    if (changeLabel.includes('详情') || changeLabel.includes('查看')) {
+      changeText = '';
+    }
+
+    const rowEl = document.createElement('tr');
+    const codeCell = document.createElement('td');
+    codeCell.textContent = code || '--';
+    rowEl.appendChild(codeCell);
+
+    const nameCell = document.createElement('td');
+    nameCell.textContent = name || '--';
+    rowEl.appendChild(nameCell);
+
+    const pctCell = document.createElement('td');
+    if (pctValue !== null) {
+      pctCell.textContent = `${pctValue > 0 ? '+' : ''}${pctValue.toFixed(2)}%`;
+      pctCell.className = pctValue > 0 ? 'market-up' : pctValue < 0 ? 'market-down' : 'market-flat';
+    } else {
+      pctCell.textContent = '--';
+    }
+    rowEl.appendChild(pctCell);
+
+    const weightCell = document.createElement('td');
+    weightCell.textContent = weightText || '--';
+    rowEl.appendChild(weightCell);
+
+    const changeCell = document.createElement('td');
+    if (changeLabel.includes('新增') || changeLabel.includes('新进')) {
+      changeCell.textContent = '新增';
+      changeCell.className = 'market-up';
+    } else if (changeLabel.includes('退出') || changeLabel.includes('清仓')) {
+      changeCell.textContent = changeLabel.includes('清仓') ? '清仓' : '退出';
+      changeCell.className = 'market-down';
+    } else {
+      let changeValue = parsePctValue(changeText);
+      if (changeValue === null) {
+        const rowValues = cells
+          .map((cell) => parsePctValue(cell.textContent || ''))
+          .filter((value): value is number => value !== null);
+        const fallback = rowValues.filter((value) => {
+          if (pctValue !== null && Math.abs(value - pctValue) < 0.001) return false;
+          if (weightValue !== null && Math.abs(value - weightValue) < 0.001) return false;
+          return true;
+        });
+        if (fallback.length) {
+          changeValue = fallback[fallback.length - 1];
+        }
+      }
+
+      if (changeValue !== null) {
+        changeCell.textContent = `${changeValue > 0 ? '+' : ''}${changeValue.toFixed(2)}%`;
+        changeCell.className =
+          changeValue > 0 ? 'market-up' : changeValue < 0 ? 'market-down' : 'market-flat';
+      } else {
+        changeCell.textContent = changeText || '--';
+      }
+    }
+    rowEl.appendChild(changeCell);
+
+    tbody.appendChild(rowEl);
   });
 
-  removeIndexes.sort((a, b) => b - a);
-  if (removeIndexes.length) {
-    rows.forEach((row) => {
-      removeIndexes.forEach((idx) => {
-        const cell = row.children[idx];
-        if (cell) row.removeChild(cell);
-      });
-    });
-  }
-
-  if (hasQuotes) {
-    const pctTh = document.createElement('th');
-    pctTh.textContent = '涨跌幅';
-    pctTh.setAttribute('data-quote', 'pct');
-    headerRow.appendChild(pctTh);
-
-    rows.slice(1).forEach((row) => {
-      const code = extractCodeFromRow(row);
-      if (!code) return;
-      const quote = quotes[code] || null;
-      const pctCell = document.createElement('td');
-      pctCell.setAttribute('data-quote', 'pct');
-      row.appendChild(pctCell);
-
-      if (quote?.pct !== null && quote?.pct !== undefined) {
-        pctCell.textContent = `${quote.pct > 0 ? '+' : ''}${quote.pct.toFixed(2)}%`;
-        pctCell.className = quote.pct > 0 ? 'market-up' : quote.pct < 0 ? 'market-down' : 'market-flat';
-      } else {
-        pctCell.textContent = '--';
-        pctCell.className = '';
-      }
-    });
-  }
-
-  table.setAttribute('data-enhanced', 'true');
+  newTable.appendChild(tbody);
+  root.innerHTML = '';
+  root.appendChild(newTable);
+  newTable.setAttribute('data-enhanced', 'true');
 }
 
 function extractCodeFromRow(row: Element) {
