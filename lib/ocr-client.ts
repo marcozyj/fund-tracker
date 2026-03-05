@@ -1,4 +1,9 @@
 let workerPromise: Promise<any> | null = null;
+let progressListener: ((payload: { status: string; progress: number }) => void) | null = null;
+
+function notifyProgress(payload: { status: string; progress: number }) {
+  if (progressListener) progressListener(payload);
+}
 
 function resolveBasePrefix() {
   if (typeof window === 'undefined') {
@@ -36,17 +41,31 @@ async function getWorker() {
     const worker = await Tesseract.createWorker({
       workerPath,
       corePath,
-      langPath
+      langPath,
+      logger: (message: { status: string; progress: number }) => notifyProgress(message)
     });
-    await worker.loadLanguage('chi_sim');
-    await worker.initialize('chi_sim');
+    const withTimeout = async <T>(promise: Promise<T>, label: string, timeoutMs = 20000) => {
+      let timer: any;
+      const timeout = new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timeout`)), timeoutMs);
+      });
+      const result = await Promise.race([promise, timeout]);
+      clearTimeout(timer);
+      return result as T;
+    };
+    await withTimeout(worker.loadLanguage('chi_sim'), 'loadLanguage');
+    await withTimeout(worker.initialize('chi_sim'), 'initialize');
     return worker;
   })();
   return workerPromise;
 }
 
-export async function recognizeImage(file: File) {
+export async function recognizeImage(
+  file: File,
+  onProgress?: (payload: { status: string; progress: number }) => void
+) {
   try {
+    progressListener = onProgress ?? null;
     const worker = await getWorker();
     const timeoutMs = 20000;
     const timeout = new Promise((_, reject) => {
@@ -57,5 +76,7 @@ export async function recognizeImage(file: File) {
   } catch (error) {
     workerPromise = null;
     throw error;
+  } finally {
+    progressListener = null;
   }
 }

@@ -200,6 +200,7 @@ export default function AppShell() {
   const [quickImportPreview, setQuickImportPreview] = useState('');
   const [quickImportText, setQuickImportText] = useState('');
   const [quickImportLoading, setQuickImportLoading] = useState(false);
+  const [quickImportProgress, setQuickImportProgress] = useState('');
   const [quickImportItems, setQuickImportItems] = useState<BatchTradeInput[]>([]);
   const [quickImportMode, setQuickImportMode] = useState<'trade' | 'holding'>('trade');
   const [quickImportHoldings, setQuickImportHoldings] = useState<
@@ -1061,6 +1062,7 @@ export default function AppShell() {
     setQuickImportHoldingEdits({});
     setQuickImportMode('trade');
     setQuickImportLoading(false);
+    setQuickImportProgress('');
     setQuickImportError('');
     setQuickImportOpen(true);
   }
@@ -1071,6 +1073,7 @@ export default function AppShell() {
       quickImportSearchTimerRef.current = null;
     }
     setQuickImportOpen(false);
+    setQuickImportProgress('');
     setQuickImportError('');
   }
 
@@ -1281,6 +1284,7 @@ export default function AppShell() {
       setQuickImportHoldingEdits({});
       setQuickImportText('');
       setQuickImportDetected('');
+      setQuickImportProgress('');
       setQuickImportError('');
       return;
     }
@@ -1294,9 +1298,13 @@ export default function AppShell() {
 
   const handleQuickOcr = async (file: File) => {
     setQuickImportLoading(true);
+    setQuickImportProgress('准备识别...');
     setQuickImportError('');
     try {
-      const text = await recognizeImage(file);
+      const text = await recognizeImage(file, (payload) => {
+        const pct = Number.isFinite(payload.progress) ? Math.round(payload.progress * 100) : 0;
+        setQuickImportProgress(`${payload.status} ${pct}%`);
+      });
       setQuickImportText(text);
       if (!text.trim()) {
         setQuickImportError('未识别到任何文本，请换更清晰的截图');
@@ -1392,6 +1400,7 @@ export default function AppShell() {
       setQuickImportError('识别失败，请检查网络或换更清晰的截图');
     } finally {
       setQuickImportLoading(false);
+      setQuickImportProgress('');
     }
   };
 
@@ -2728,6 +2737,7 @@ export default function AppShell() {
                   </label>
                   {quickImportPreview ? <img className="batch-preview" src={quickImportPreview} alt="交易记录预览" /> : null}
                   {quickImportLoading ? <div className="loading-indicator">识别中...</div> : null}
+                  {quickImportProgress ? <div className="progress-text">{quickImportProgress}</div> : null}
                   {quickImportError ? <div className="error-text">{quickImportError}</div> : null}
                 </div>
                 <div className="batch-right">
