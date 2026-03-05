@@ -1,18 +1,30 @@
 let workerPromise: Promise<any> | null = null;
 
-function resolveOcrPaths() {
+function resolveBasePrefix() {
   if (typeof window === 'undefined') {
+    return '';
+  }
+  const data = (window as any).__NEXT_DATA__ || {};
+  const assetPrefix = typeof data.assetPrefix === 'string' ? data.assetPrefix : '';
+  const origin = window.location.origin;
+  if (!assetPrefix) return origin;
+  if (/^https?:\/\//.test(assetPrefix)) return assetPrefix.replace(/\/$/, '');
+  return `${origin}${assetPrefix.replace(/\/$/, '')}`;
+}
+
+function resolveOcrPaths() {
+  const prefix = resolveBasePrefix();
+  if (!prefix) {
     return {
       workerPath: '',
       corePath: '',
       langPath: ''
     };
   }
-  const base = window.location.href;
   return {
-    workerPath: new URL('tesseract/worker.min.js', base).toString(),
-    corePath: new URL('tesseract/tesseract-core.wasm.js', base).toString(),
-    langPath: new URL('tessdata', base).toString()
+    workerPath: `${prefix}/tesseract/worker.min.js`,
+    corePath: `${prefix}/tesseract/tesseract-core.wasm.js`,
+    langPath: `${prefix}/tessdata`
   };
 }
 
@@ -36,11 +48,14 @@ async function getWorker() {
 export async function recognizeImage(file: File) {
   try {
     const worker = await getWorker();
-    const result = await worker.recognize(file);
+    const timeoutMs = 20000;
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('OCR timeout')), timeoutMs);
+    });
+    const result = (await Promise.race([worker.recognize(file), timeout])) as any;
     return result?.data?.text || '';
   } catch (error) {
     workerPromise = null;
     throw error;
   }
 }
-
