@@ -5,6 +5,36 @@ function notifyProgress(payload: { status: string; progress: number }) {
   if (progressListener) progressListener(payload);
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(input, { ...init, signal: controller.signal, cache: 'no-store' });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function preflightResource(url: string) {
+  if (!url) return false;
+  try {
+    const head = await fetchWithTimeout(url, { method: 'HEAD' }, 8000);
+    if (head.ok) return true;
+    if (head.status === 405) {
+      const range = await fetchWithTimeout(
+        url,
+        { method: 'GET', headers: { Range: 'bytes=0-0' } },
+        8000
+      );
+      return range.ok;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function resolveBasePrefix() {
   if (typeof window === 'undefined') {
     return '';
@@ -66,6 +96,18 @@ export async function recognizeImage(
 ) {
   try {
     progressListener = onProgress ?? null;
+    const { workerPath, corePath, langPath } = resolveOcrPaths();
+    notifyProgress({ status: '加载OCR资源', progress: 0 });
+    const [workerOk, coreOk, langOk] = await Promise.all([
+      preflightResource(workerPath),
+      preflightResource(corePath),
+      preflightResource(`${langPath}/chi_sim.traineddata.gz`)
+    ]);
+    if (!workerOk || !coreOk || !langOk) {
+      throw new Error('OCR资源加载失败');
+    }
+
+    notifyProgress({ status: '初始化OCR', progress: 0 });
     const worker = await getWorker();
     const timeoutMs = 20000;
     const timeout = new Promise((_, reject) => {

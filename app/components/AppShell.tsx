@@ -1387,7 +1387,7 @@ export default function AppShell() {
           setQuickImportError('未识别到交易记录或持仓列表，请换更清晰的截图');
         }
       }
-    } catch {
+    } catch (error) {
       setQuickImportText('');
       setQuickImportItems([]);
       setQuickImportHoldings([]);
@@ -1397,7 +1397,14 @@ export default function AppShell() {
       setQuickImportHoldingEdits({});
       setQuickImportDetected('');
       setQuickImportResolved(null);
-      setQuickImportError('识别失败，请检查网络或换更清晰的截图');
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('OCR资源加载失败')) {
+        setQuickImportError('OCR资源加载失败，请检查 /public/tesseract 与 /public/tessdata 是否可访问');
+      } else if (message.includes('timeout')) {
+        setQuickImportError('识别超时，请换更清晰的截图或稍后再试');
+      } else {
+        setQuickImportError('识别失败，请检查网络或换更清晰的截图');
+      }
     } finally {
       setQuickImportLoading(false);
       setQuickImportProgress('');
