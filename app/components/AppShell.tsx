@@ -26,7 +26,7 @@ import {
 } from '../../lib/client-fund';
 import { classByValue, containsCjk, formatMoney, formatMoneyWithSymbol, formatPct, normalizeCode, toNumber } from '../../lib/utils';
 import { computeCostUnit, computeHoldingView, computeMetrics, resolveDailyPct } from '../../lib/metrics';
-import { recognizeImage, resetOcrWorker } from '../../lib/ocr-client';
+import { resolveFundByFuzzy } from '../../lib/fund-fuzzy';
 import FundCard from './FundCard';
 import FundModal from './FundModal';
 
@@ -191,26 +191,18 @@ export default function AppShell() {
   const [searchResults, setSearchResults] = useState<SearchItem[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const [ocrOpen, setOcrOpen] = useState(false);
-  const [ocrPreview, setOcrPreview] = useState('');
-  const [ocrLoading, setOcrLoading] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState(0);
-  const [ocrStatus, setOcrStatus] = useState('');
-  const [ocrError, setOcrError] = useState('');
-  const [ocrText, setOcrText] = useState('');
-  const [ocrItems, setOcrItems] = useState<
-    Array<{
-      id: string;
-      name: string;
-      code: string;
-      amount: number | null;
-      rate: number | null;
-      profit: number | null;
-    }>
+  const [scanPickOpen, setScanPickOpen] = useState(false);
+  const [scanConfirmOpen, setScanConfirmOpen] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isScanImporting, setIsScanImporting] = useState(false);
+  const [scanDragging, setScanDragging] = useState(false);
+  const [scanError, setScanError] = useState('');
+  const [scanProgress, setScanProgress] = useState({ stage: 'ocr' as 'ocr' | 'verify', current: 0, total: 0 });
+  const [scanImportProgress, setScanImportProgress] = useState({ current: 0, total: 0, success: 0, failed: 0 });
+  const [scannedFunds, setScannedFunds] = useState<
+    Array<{ code: string; name: string; status: 'ok' | 'added' | 'invalid'; amount?: number; profit?: number }>
   >([]);
-  const [ocrSelected, setOcrSelected] = useState<Record<string, boolean>>({});
-  const [ocrEdits, setOcrEdits] = useState<Record<string, { amount: string; rate: string }>>({});
-  const [ocrTicker, setOcrTicker] = useState('');
+  const [selectedScannedCodes, setSelectedScannedCodes] = useState<Set<string>>(new Set());
 
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<'holding' | 'watchlist' | null>(null);
@@ -239,6 +231,8 @@ export default function AppShell() {
   const extrasPendingRef = useRef<Set<string>>(new Set());
   const refreshPendingRef = useRef(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const abortScanRef = useRef(false);
 
   useEffect(() => {
     historyCacheRef.current = historyTableCache;
@@ -1016,212 +1010,107 @@ export default function AppShell() {
     setSearchOpen(true);
   }
 
-  const parseNumeric = (value: string) => {
-    const cleaned = value.replace(/[,%]/g, '').trim();
-    if (!cleaned) return null;
-    const num = Number(cleaned.replace(/,/g, ''));
-    return Number.isFinite(num) ? num : null;
+  const SCAN_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+
+  const normalizeOcrText = (value: string) => value.replace(/\s+/g, '').trim();
+
+  const parseNumberTokens = (value: string) => {
+    const matches = value.match(/[+-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?|[+-]?\d+(?:\.\d+)?/g) || [];
+    return matches
+      .map((item) => Number(item.replace(/,/g, '')))
+      .filter((num) => Number.isFinite(num));
   };
 
-  const normalizeNumberToken = (raw: string, preferCents = false) => {
-    let cleaned = raw.replace(/[^\d.,+-]/g, '');
-    if (!cleaned) return null;
-    const sign = cleaned.includes('-') ? -1 : 1;
-    cleaned = cleaned.replace(/[+-]/g, '');
-    const dotCount = (cleaned.match(/\./g) || []).length;
-    if (dotCount > 1) {
-      const lastDot = cleaned.lastIndexOf('.');
-      const integerPart = cleaned.slice(0, lastDot).replace(/[.,]/g, '');
-      const decimalPart = cleaned.slice(lastDot + 1).replace(/[.,]/g, '');
-      cleaned = `${integerPart}.${decimalPart}`;
-    } else {
-      cleaned = cleaned.replace(/,/g, '');
-    }
-    if (!cleaned) return null;
-    if (!cleaned.includes('.') && preferCents && cleaned.length >= 3) {
-      cleaned = `${cleaned.slice(0, -2)}.${cleaned.slice(-2)}`;
-    }
-    const num = Number(cleaned);
-    return Number.isFinite(num) ? num * sign : null;
-  };
-
-  const normalizeOcrLine = (value: string) =>
-    value
-      .replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 65248))
-      .replace(/[，]/g, ',')
-      .replace(/[．。]/g, '.')
-      .replace(/[％]/g, '%')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-  const parseHoldingsText = (text: string) => {
-    if (!text) return [];
-    const lines = text
-      .split(/\n+/)
-      .map((line) => normalizeOcrLine(line))
-      .filter(Boolean);
-    const ignoreKeywords = ['市场解读', '更多产品', '去市场看看', '基金销售', '客服', '服务由', '我的持有'];
-    const isNameLine = (line: string) => {
-      const compact = line.replace(/\s+/g, '');
-      if (!compact) return false;
-      if (ignoreKeywords.some((word) => compact.includes(word))) return false;
-      if (/金额|收益|持有|昨日收益|收益率/.test(compact)) return false;
-      const cjkCount = (compact.match(/[\u4e00-\u9fa5]/g) || []).length;
-      const digitCount = (compact.match(/\d/g) || []).length;
-      if (cjkCount < 2) return false;
-      if (digitCount > 6 && digitCount >= cjkCount) return false;
-      if (compact.length < 4) return false;
-      return true;
+  const normalizeGlmHolding = (raw: any) => {
+    const name = normalizeOcrText(
+      String(raw?.name ?? raw?.fund ?? raw?.title ?? raw?.fund_name ?? raw?.fundName ?? '')
+    );
+    const amountSource = String(
+      raw?.amount_text ??
+        raw?.amountText ??
+        raw?.amount ??
+        raw?.holding_amount ??
+        raw?.holdingAmount ??
+        raw?.amount_value ??
+        raw?.amountValue ??
+        raw?.value ??
+        ''
+    );
+    const profitSource = String(
+      raw?.profit_text ??
+        raw?.profitText ??
+        raw?.profit ??
+        raw?.holding_profit ??
+        raw?.holdingProfit ??
+        raw?.profit_value ??
+        raw?.profitValue ??
+        raw?.holding_yield ??
+        raw?.holdingIncome ??
+        ''
+    );
+    const amountTokens = parseNumberTokens(amountSource);
+    const amount = amountTokens.length
+      ? amountTokens.reduce((max, val) => (Math.abs(val) > Math.abs(max) ? val : max), 0)
+      : null;
+    const profitTokens = parseNumberTokens(profitSource);
+    const profit = profitTokens.length
+      ? profitTokens.reduce((max, val) => (Math.abs(val) > Math.abs(max) ? val : max), 0)
+      : null;
+    return {
+      name,
+      amount: amount !== null ? Math.abs(amount) : null,
+      profit,
+      amountRaw: amountSource,
+      profitRaw: profitSource
     };
+  };
 
-    const extractNumbers = (value: string) => {
-      const tokens = value.match(/[-+]?\d[\d.,]*%?/g) || [];
-      const percents: number[] = [];
-      const numbers: number[] = [];
-      tokens.forEach((token) => {
-        const isPercent = token.includes('%');
-        const parsed = normalizeNumberToken(token, !isPercent);
-        if (parsed === null) return;
-        if (isPercent) percents.push(parsed);
-        else numbers.push(parsed);
-      });
-      return { percents, numbers };
-    };
+  const formatSignedMoney = (value: number | null) => {
+    if (value === null || value === undefined || Number.isNaN(value)) return '--';
+    const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+    return `${sign}${formatMoney(Math.abs(value))}`;
+  };
 
-    const buildItem = (name: string, blockText: string) => {
-      const { percents, numbers } = extractNumbers(blockText);
-      if (!numbers.length) return null;
-      const amountCandidates = numbers.filter((val) => val > 0);
-      const amount =
-        amountCandidates.length > 0
-          ? amountCandidates.reduce((a, b) => (Math.abs(b) > Math.abs(a) ? b : a), amountCandidates[0])
-          : numbers.reduce((a, b) => (Math.abs(b) > Math.abs(a) ? b : a), numbers[0]);
-      const rate = percents.length ? percents[percents.length - 1] : null;
-      let profit: number | null = null;
-      const remaining = numbers.filter((val) => val !== amount);
-      const profitCandidate =
-        remaining.length > 0 ? remaining.reduce((a, b) => (Math.abs(b) > Math.abs(a) ? b : a), remaining[0]) : null;
-      if (rate !== null && amount !== null) {
-        profit = Number(((amount * rate) / (100 + rate)).toFixed(2));
-      } else if (profitCandidate !== null) {
-        const abs = Math.abs(profitCandidate);
-        profit =
-          abs >= 1000 && abs < 100000
-            ? Number((profitCandidate / 100).toFixed(2))
-            : Number(profitCandidate.toFixed(2));
-      }
-      return {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-        name,
-        amount: amount !== null ? Number(amount.toFixed(2)) : null,
-        rate,
-        profit
-      };
-    };
+  const OCR_NAME_ALIASES: Array<{ pattern: RegExp; code: string; name: string }> = [
+    {
+      pattern: /长城久嘉创新成长灵活配置混合C/i,
+      code: '010052',
+      name: '长城久嘉创新成长混合C'
+    },
+    {
+      pattern: /招商中证大宗商品股票指数\(LOF\)/i,
+      code: '161715',
+      name: '招商大宗商品(LOF)'
+    }
+  ];
 
-    const items: Array<{ id: string; name: string; amount: number | null; rate: number | null; profit: number | null }> =
-      [];
+  const medianValue = (values: number[]) => {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  };
 
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      if (!line) continue;
-      const hasPercent = /%/.test(line);
-      if (hasPercent) {
-        let name = '';
-        for (let j = i - 1; j >= 0 && i - j <= 3; j -= 1) {
-          if (isNameLine(lines[j])) {
-            name = lines[j];
-            break;
-          }
-        }
-        if (!name && /[\u4e00-\u9fa5]/.test(line)) {
-          name = line.replace(/[-+]?\d[\d,]*\.?\d*%?/g, '').trim();
-        }
-        if (!name) continue;
-        const item = buildItem(name, line);
-        if (item) items.push(item);
-        continue;
-      }
-
-      if (isNameLine(line)) {
-        const block = [line];
-        let j = i + 1;
-        while (j < lines.length && !isNameLine(lines[j])) {
-          block.push(lines[j]);
-          if (block.length >= 4) break;
-          j += 1;
-        }
-        const item = buildItem(line, block.join(' '));
-        if (item) items.push(item);
-        i = j - 1;
+  const adjustAmountByMedian = (value: number, raw: string | undefined, median: number | null) => {
+    if (!median || median < 2000) return value;
+    const rawText = String(raw || '').replace(/\s+/g, '');
+    const intPart = rawText.split('.')[0]?.replace(/,/g, '') || '';
+    if (intPart.length > 3 || value >= median / 2) return value;
+    const candidates = [10, 100];
+    let best = value;
+    let bestDiff = Math.abs(value - median);
+    for (const factor of candidates) {
+      const scaled = value * factor;
+      const diff = Math.abs(scaled - median);
+      if (diff < bestDiff) {
+        best = scaled;
+        bestDiff = diff;
       }
     }
-
-    return items;
+    return best;
   };
 
-  const resolveOcrCodes = async (
-    items: Array<{ id: string; name: string; amount: number | null; rate: number | null; profit: number | null }>
-  ) => {
-    const resolved: typeof ocrItems = [];
-    const names: string[] = [];
-    for (let idx = 0; idx < items.length; idx += 1) {
-      const item = items[idx];
-      let code = '';
-      try {
-        const list = await searchFundsClient(item.name, 4);
-        if (Array.isArray(list) && list.length) {
-          code = list[0].code || '';
-        }
-      } catch {
-        // ignore
-      }
-      resolved.push({ ...item, code });
-      names.push(item.name);
-      setOcrTicker(`已识别 ${names.length} 只：${names.join('、')}`);
-      setOcrProgress(60 + Math.round(((idx + 1) / items.length) * 40));
-    }
-    return resolved;
-  };
-
-  const resetOcrState = () => {
-    setOcrPreview('');
-    setOcrLoading(false);
-    setOcrProgress(0);
-    setOcrStatus('');
-    setOcrError('');
-    setOcrText('');
-    setOcrItems([]);
-    setOcrSelected({});
-    setOcrEdits({});
-    setOcrTicker('');
-  };
-
-  const openOcrImport = () => {
-    resetOcrWorker();
-    resetOcrState();
-    setOcrOpen(true);
-  };
-
-  const closeOcrImport = () => {
-    setOcrOpen(false);
-  };
-
-  const applyOcrEdits = (items: typeof ocrItems) => {
-    const edits: Record<string, { amount: string; rate: string }> = {};
-    const selected: Record<string, boolean> = {};
-    items.forEach((item) => {
-      edits[item.id] = {
-        amount: item.amount !== null && item.amount !== undefined ? String(item.amount) : '',
-        rate: item.rate !== null && item.rate !== undefined ? String(item.rate) : ''
-      };
-      selected[item.id] = true;
-    });
-    setOcrEdits(edits);
-    setOcrSelected(selected);
-  };
-
-  const resizeOcrImage = async (file: File, maxSize = 1600) => {
+  const resizeScanImage = async (file: File, maxSize = 2000) => {
     const bitmap = await createImageBitmap(file);
     const { width, height } = bitmap;
     const scale = Math.min(1, maxSize / Math.max(width, height));
@@ -1234,105 +1123,369 @@ export default function AppShell() {
     if (!ctx) return file;
     ctx.drawImage(bitmap, 0, 0, targetW, targetH);
     return await new Promise<Blob>((resolve) => {
-      canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', 0.85);
+      canvas.toBlob((blob) => resolve(blob || file), 'image/jpeg', 0.9);
     });
   };
 
-  const handleOcrFile = async (file: File) => {
-    resetOcrState();
-    setOcrLoading(true);
-    setOcrStatus('启动OCR...');
-    setOcrProgress(5);
+  const enhanceScanImage = async (blob: Blob) => {
+    const bitmap = await createImageBitmap(blob);
+    const { width, height } = bitmap;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return blob;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    const contrast = 35;
+    const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const next = factor * (lum - 128) + 128;
+      data[i] = next;
+      data[i + 1] = next;
+      data[i + 2] = next;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return await new Promise<Blob>((resolve) => {
+      canvas.toBlob((out) => resolve(out || blob), 'image/jpeg', 0.92);
+    });
+  };
+
+  const blobToBase64 = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error('BASE64_FAIL'));
+      reader.readAsDataURL(blob);
+    });
+
+  const recognizeWithGlm = async (blob: Blob) => {
+    const image = await blobToBase64(blob);
+    const resp = await fetch('/api/ocr/glm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image })
+    });
+    const data = await resp.json();
+    if (!resp.ok || data?.error) {
+      throw new Error(String(data?.error || 'GLM_OCR_FAIL'));
+    }
+    return Array.isArray(data?.funds) ? data.funds : [];
+  };
+
+  const openScanPick = () => setScanPickOpen(true);
+  const closeScanPick = () => {
+    if (!isScanning) setScanPickOpen(false);
+  };
+
+  const handleScanDragOver: DragEventHandler<HTMLDivElement> = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isScanning) setScanDragging(true);
+  };
+
+  const handleScanDragLeave: DragEventHandler<HTMLDivElement> = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+      setScanDragging(false);
+    }
+  };
+
+  const handleScanDrop: DragEventHandler<HTMLDivElement> = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setScanDragging(false);
+    if (isScanning) return;
+    const files = Array.from(event.dataTransfer.files || []).filter((file) =>
+      SCAN_IMAGE_TYPES.includes(file.type)
+    );
+    if (files.length) handleScanFilesDrop(files);
+  };
+
+  const cancelScan = () => {
+    abortScanRef.current = true;
+    setIsScanning(false);
+    setScanProgress({ stage: 'ocr', current: 0, total: 0 });
+    if (scanInputRef.current) scanInputRef.current.value = '';
+  };
+
+  const processScanFiles = async (files: File[]) => {
+    if (!files?.length) return;
+    setIsScanning(true);
+    setScanPickOpen(false);
+    abortScanRef.current = false;
+    setScanError('');
+    setScanProgress({ stage: 'ocr', current: 0, total: files.length });
+
     try {
-      const resized = await resizeOcrImage(file, 1600);
-      const previewUrl = URL.createObjectURL(resized);
-      setOcrPreview(previewUrl);
-      const text = await recognizeImage(
-        new File([resized], file.name, { type: 'image/jpeg' }),
-        (payload) => {
-          const pct = Number.isFinite(payload.progress) ? Math.round(payload.progress) : 0;
-          setOcrStatus(payload.status);
-          setOcrProgress(Math.min(100, pct));
+      const searchFundsWithTimeout = async (val: string, ms: number) => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const timeout = new Promise<SearchItem[]>((resolve) => {
+          timer = setTimeout(() => resolve([]), ms);
+        });
+        try {
+          return await Promise.race([searchFundsClient(val, 8), timeout]) as SearchItem[];
+        } catch {
+          return [];
+        } finally {
+          if (timer) clearTimeout(timer);
         }
-      );
-      setOcrText(text);
-      const parsed = parseHoldingsText(text);
-      if (!parsed.length) {
-        setOcrError('未识别到持仓条目，请换更清晰的截图');
+      };
+
+      const parsedHoldings: Array<{ name: string; amount: number; profit: number; amountRaw?: string; profitRaw?: string }> = [];
+
+      for (let i = 0; i < files.length; i += 1) {
+        if (abortScanRef.current) break;
+        const file = files[i];
+        setScanProgress((prev) => ({ ...prev, current: i + 1 }));
+
+        try {
+          const resized = await resizeScanImage(file, 2000);
+          const enhanced = await enhanceScanImage(resized);
+          const glmHoldings = await recognizeWithGlm(enhanced);
+          glmHoldings.forEach((item: any) => {
+            const normalized = normalizeGlmHolding(item);
+            if (normalized.name && normalized.amount !== null && normalized.profit !== null) {
+              parsedHoldings.push({
+                name: normalized.name,
+                amount: normalized.amount,
+                profit: normalized.profit,
+                amountRaw: normalized.amountRaw,
+                profitRaw: normalized.profitRaw
+              });
+            }
+          });
+        } catch (err: any) {
+          const message = String(err?.message || '');
+          if (message.includes('GLM_OCR_KEY_MISSING')) {
+            throw err;
+          }
+          setScanError(message || '识别失败，请稍后重试');
+        }
+      }
+
+      if (abortScanRef.current) return;
+
+      if (!parsedHoldings.length) {
+        setScanError('未识别到有效的持仓信息，请尝试更清晰的截图或确保包含完整列表。');
+        setScannedFunds([]);
+        setScanConfirmOpen(true);
         return;
       }
-      setOcrStatus('解析基金中');
-      const resolved = await resolveOcrCodes(parsed);
-      setOcrItems(resolved);
-      applyOcrEdits(resolved);
-      setOcrStatus('识别完成');
-      setOcrProgress(100);
-    } catch (error) {
-      setOcrError(error instanceof Error ? error.message : '识别失败');
-    } finally {
-      setOcrLoading(false);
-    }
-  };
 
-  const handleOcrDrop: DragEventHandler<HTMLDivElement> = (event) => {
-    event.preventDefault();
-    const file = event.dataTransfer.files?.[0];
-    if (!file) return;
-    void handleOcrFile(file);
-  };
+      const buildNameVariants = (raw: string) => {
+        const normalized = normalizeOcrText(raw);
+        const variants = new Set<string>();
+        if (normalized) variants.add(normalized);
+        OCR_NAME_ALIASES.forEach((alias) => {
+          if (alias.pattern.test(normalized)) {
+            variants.add(alias.name);
+          }
+        });
+        const noParen = normalized.replace(/（[^）]*）|\([^)]*\)/g, '');
+        if (noParen) variants.add(noParen);
+        const noClass = noParen.replace(/([A-Z])(?:类)?$/i, '');
+        if (noClass) variants.add(noClass);
+        const noSuffix = noParen.replace(/(发起式|联接|混合|指数|股票|基金|增强|主题|策略|精选|成长|价值|配置|灵活|ETF|LOF|QDII)$/g, '');
+        if (noSuffix) variants.add(noSuffix);
+        const noSuffixClass = noSuffix.replace(/([A-Z])(?:类)?$/i, '');
+        if (noSuffixClass) variants.add(noSuffixClass);
+        return Array.from(variants).filter((item) => item.length >= 4);
+      };
 
-  const handleOcrBrowse = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    void handleOcrFile(file);
-  };
-
-  const updateOcrValue = (id: string, field: 'amount' | 'rate', value: string) => {
-    setOcrEdits((prev) => ({
-      ...prev,
-      [id]: { amount: prev[id]?.amount ?? '', rate: prev[id]?.rate ?? '', [field]: value }
-    }));
-    const parsed = parseNumeric(value);
-    setOcrItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        const next = { ...item } as typeof item;
-        if (field === 'amount') next.amount = parsed;
-        if (field === 'rate') next.rate = parsed;
-        if (next.amount !== null && next.rate !== null) {
-          next.profit = Number(((next.amount * next.rate) / (100 + next.rate)).toFixed(2));
+      const resolveByName = async (name: string) => {
+        const normalized = normalizeOcrText(name);
+        const aliasMatch = OCR_NAME_ALIASES.find((alias) => alias.pattern.test(normalized));
+        if (aliasMatch) {
+          return { code: aliasMatch.code, name: aliasMatch.name };
         }
-        return next;
-      })
-    );
+        const variants = buildNameVariants(name);
+        for (const variant of variants) {
+          const list = await searchFundsWithTimeout(variant, 8000);
+          if (Array.isArray(list) && list.length) {
+            const exact = list.find((item) => item.name === name || item.name === variant);
+            if (exact) return exact;
+            const includes = list.find((item) => item.name.includes(variant) || variant.includes(item.name));
+            return includes || list[0];
+          }
+        }
+        for (const variant of variants) {
+          const fuzzy = await resolveFundByFuzzy(variant);
+          if (fuzzy?.code) return { code: fuzzy.code, name: fuzzy.name };
+        }
+        return null;
+      };
+
+      const mergedHoldings = new Map<string, { name: string; amount: number; profit: number }>();
+      const unresolved: Array<{ code: string; name: string; status: 'invalid'; amount: number; profit: number }> = [];
+      const cleanedHoldings = parsedHoldings
+        .map((item) => ({
+          name: normalizeOcrText(item.name),
+          amount: item.amount,
+          profit: item.profit,
+          amountRaw: item.amountRaw
+        }))
+        .filter((item) => item.name && item.amount > 0 && item.profit !== null);
+
+      const medianAmount = medianValue(cleanedHoldings.map((item) => item.amount));
+      const adjustedHoldings = cleanedHoldings.map((item) => ({
+        ...item,
+        amount: adjustAmountByMedian(item.amount, item.amountRaw, medianAmount)
+      }));
+
+      setScanProgress({ stage: 'verify', current: 0, total: adjustedHoldings.length });
+      for (let i = 0; i < adjustedHoldings.length; i += 1) {
+        if (abortScanRef.current) break;
+        const entry = adjustedHoldings[i];
+        setScanProgress((prev) => ({ ...prev, current: i + 1 }));
+        try {
+          const resolved = await resolveByName(entry.name);
+            if (resolved?.code) {
+              const prev = mergedHoldings.get(resolved.code);
+              if (!prev || entry.amount > prev.amount) {
+                mergedHoldings.set(resolved.code, {
+                  name: resolved.name || entry.name,
+                  amount: entry.amount,
+                  profit: entry.profit
+                });
+              }
+            } else {
+              unresolved.push({
+                code: `unknown-${i}`,
+                name: entry.name,
+                status: 'invalid',
+                amount: entry.amount,
+                profit: entry.profit
+              });
+            }
+          } catch {
+            unresolved.push({
+              code: `unknown-${i}`,
+              name: entry.name,
+              status: 'invalid',
+              amount: entry.amount,
+              profit: entry.profit
+            });
+          }
+        }
+
+      if (abortScanRef.current) return;
+
+      const existingCodes = new Set([...holdings.map((h) => h.code)]);
+      const results: Array<{ code: string; name: string; status: 'ok' | 'added' | 'invalid'; amount: number; profit: number }> = [
+        ...Array.from(mergedHoldings.entries()).map(([code, value]) => ({
+          code,
+          name: value.name,
+          amount: value.amount,
+          profit: value.profit,
+          status: existingCodes.has(code) ? 'added' : 'ok'
+        })),
+        ...unresolved
+      ];
+
+      setScannedFunds(results);
+      setSelectedScannedCodes(new Set(results.filter((item) => item.status === 'ok').map((item) => item.code)));
+      setScanConfirmOpen(true);
+    } catch (err: any) {
+      if (!abortScanRef.current) {
+        const message = String(err?.message || '');
+        if (message.includes('GLM_OCR_KEY_MISSING')) {
+          setScanError('未配置 GLM API Key，无法识别截图。');
+        } else {
+          setScanError(message || '识别失败，请稍后重试');
+        }
+      }
+    } finally {
+      setIsScanning(false);
+      setScanProgress({ stage: 'ocr', current: 0, total: 0 });
+      if (scanInputRef.current) scanInputRef.current.value = '';
+    }
   };
 
-  const handleImportHoldings = async () => {
-    const selected = ocrItems.filter((item) => ocrSelected[item.id]);
-    if (!selected.length) return;
-    for (const item of selected) {
-      const edit = ocrEdits[item.id];
-      const amount = toNumber(edit?.amount ?? item.amount);
-      const rate = toNumber(edit?.rate ?? item.rate);
-      if (amount === null || amount <= 0) continue;
-      const profit =
-        rate !== null && rate !== undefined
-          ? Number(((amount * rate) / (100 + rate)).toFixed(2))
-          : item.profit;
-      const code = normalizeCode(item.code);
-      if (!code) continue;
-      const latestNav = fundCache[code]?.latestNav ?? null;
-      const payload = buildHoldingPayload(
-        code,
-        'amount',
-        { amount, profit, shares: null, costPrice: null, firstBuy: todayCn() },
-        latestNav
-      );
-      saveHolding(payload, latestNav, true);
-      ensureFundData(code);
+  const handleScanPick = () => {
+    scanInputRef.current?.click();
+  };
+
+  const handleScanFilesUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    processScanFiles(files);
+  };
+
+  const handleScanFilesDrop = (files: File[]) => {
+    processScanFiles(files);
+  };
+
+  const toggleScannedCode = (code: string) => {
+    setSelectedScannedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const confirmScanImport = async () => {
+    const selections = scannedFunds.filter(
+      (item) =>
+        selectedScannedCodes.has(item.code) &&
+        item.status === 'ok' &&
+        item.amount !== undefined &&
+        item.profit !== undefined
+    );
+    if (!selections.length) return;
+    setScanConfirmOpen(false);
+    setIsScanImporting(true);
+    setScanImportProgress({ current: 0, total: selections.length, success: 0, failed: 0 });
+
+    try {
+      for (let i = 0; i < selections.length; i += 1) {
+        const entry = selections[i];
+        const code = entry.code;
+        setScanImportProgress((prev) => ({ ...prev, current: i + 1 }));
+        if (holdings.some((item) => item.code === code)) continue;
+        try {
+          const amount = Number(entry.amount ?? 0);
+          const profit = Number(entry.profit ?? 0);
+          if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(profit)) {
+            throw new Error('INVALID_OCR_VALUE');
+          }
+          const latestNav = fundCache[code]?.latestNav ?? null;
+          const payload = buildHoldingPayload(
+            code,
+            'amount',
+            {
+              amount,
+              profit,
+              shares: null,
+              costPrice: null,
+              firstBuy: todayCn()
+            },
+            latestNav
+          );
+          saveHolding(payload, latestNav, true);
+          ensureFundData(code);
+          setScanImportProgress((prev) => ({ ...prev, success: prev.success + 1 }));
+        } catch {
+          setScanImportProgress((prev) => ({ ...prev, failed: prev.failed + 1 }));
+        }
+      }
+    } finally {
+      setIsScanImporting(false);
+      setScanImportProgress({ current: 0, total: 0, success: 0, failed: 0 });
+      setScannedFunds([]);
+      setSelectedScannedCodes(new Set());
     }
-    closeOcrImport();
   };
 
   async function resolveFeeRate(code: string) {
@@ -2452,9 +2605,9 @@ export default function AppShell() {
             <button
               type="button"
               className="mini-btn mini-btn--icon"
-              onClick={openOcrImport}
-              aria-label="截图添加"
-              title="截图添加"
+              onClick={openScanPick}
+              aria-label="截图识别"
+              title="截图识别"
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="3" y="5" width="18" height="14" rx="2" />
@@ -2580,107 +2733,146 @@ export default function AppShell() {
         </div>
       </section>
 
-      {ocrOpen && (
+      <input
+        ref={scanInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleScanFilesUpload}
+        style={{ display: 'none' }}
+      />
+
+      {scanPickOpen && (
         <div className="submodal">
-          <div className="submodal-backdrop" onClick={closeOcrImport} />
-          <div className="submodal-card batch-card">
-            <div className="submodal-header">
-              <h4>截图同步持仓</h4>
-              <button className="mini-btn" onClick={closeOcrImport}>关闭</button>
+          <div className="submodal-backdrop" onClick={closeScanPick} />
+          <div className="submodal-card scan-card">
+            <div className="submodal-header scan-header">
+              <h4>选择持仓截图</h4>
+              <button className="mini-btn" onClick={closeScanPick}>关闭</button>
             </div>
-            <div className="submodal-body">
-              <div className="batch-layout">
-                <div className="batch-left">
-                  <label
-                    className="ocr-dropzone"
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={handleOcrDrop}
-                  >
-                    <input type="file" accept="image/*" onChange={handleOcrBrowse} />
-                    <div className="ocr-dropzone-text">拖拽图片到此或点击选择</div>
-                  </label>
-                  {ocrPreview ? <img className="batch-preview" src={ocrPreview} alt="持仓截图预览" /> : null}
-                  {ocrLoading ? <div className="loading-indicator">识别中...</div> : null}
-                  {ocrStatus ? <div className="progress-text">{ocrStatus}</div> : null}
-                  <div className="ocr-progress">
-                    <div className="ocr-progress-bar" style={{ width: `${ocrProgress}%` }} />
-                  </div>
-                  {ocrError ? <div className="error-text">{ocrError}</div> : null}
-                </div>
-                <div className="batch-right">
-                  <div className="batch-head">识别结果</div>
-                  {ocrTicker ? (
-                    <div className="ocr-ticker">
-                      <div className="ocr-ticker-track">{ocrTicker}</div>
-                    </div>
-                  ) : null}
-                  <div className="batch-ocr">
-                    <div className="batch-ocr-title">识别文本</div>
-                    <textarea value={ocrText} readOnly placeholder="识别文本将在这里显示" />
-                  </div>
-                  {ocrItems.length ? (
-                    <div className="batch-list">
-                      {ocrItems.map((item) => {
-                        const edit = ocrEdits[item.id] || { amount: '', rate: '' };
-                        return (
-                          <label key={item.id} className="batch-item">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(ocrSelected[item.id])}
-                              onChange={(e) =>
-                                setOcrSelected((prev) => ({ ...prev, [item.id]: e.target.checked }))
-                              }
-                            />
-                            <div className="batch-info">
-                              <div className="batch-row">
-                                <strong>{item.name}</strong>
-                                <div className="batch-value">
-                                  <div className="batch-input">
-                                    <input
-                                      type="number"
-                                      inputMode="decimal"
-                                      step="0.01"
-                                      value={edit.amount}
-                                      onChange={(e) => updateOcrValue(item.id, 'amount', e.target.value)}
-                                    />
-                                    <span className="batch-unit">元</span>
-                                  </div>
-                                  <div className="batch-input">
-                                    <input
-                                      type="number"
-                                      inputMode="decimal"
-                                      step="0.01"
-                                      value={edit.rate}
-                                      onChange={(e) => updateOcrValue(item.id, 'rate', e.target.value)}
-                                    />
-                                    <span className="batch-unit">%</span>
-                                  </div>
-                                </div>
-                              </div>
-                              <span className="batch-meta">
-                                基金代码 {item.code || '未识别'}
-                                {item.profit !== null && item.profit !== undefined ? (
-                                  <span className="meta-dot"> · 估算收益 {formatMoney(item.profit)}</span>
-                                ) : null}
-                              </span>
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="empty-state">暂无识别结果</div>
-                  )}
-                </div>
+            <div
+              className={`scan-dropzone ${scanDragging ? 'dragging' : ''}`}
+              onDragOver={handleScanDragOver}
+              onDragLeave={handleScanDragLeave}
+              onDrop={handleScanDrop}
+              onClick={!isScanning ? handleScanPick : undefined}
+            >
+              {scanDragging ? '松开即可导入' : '拖拽图片到此处，或点击选择'}
+            </div>
+            <div className="scan-actions">
+              <button className="btn secondary" onClick={closeScanPick}>
+                取消
+              </button>
+              <button className="btn" onClick={handleScanPick} disabled={isScanning}>
+                {isScanning ? '处理中…' : '选择图片'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isScanning && (
+        <div className="submodal">
+          <div className="submodal-backdrop" />
+          <div className="submodal-card scan-progress-card">
+            <div className="loading-indicator scan-spinner" />
+            <div className="scan-progress-title">
+              {scanProgress.stage === 'verify' ? '正在验证基金…' : '正在识别中…'}
+            </div>
+            {scanProgress.total > 0 && (
+              <div className="scan-progress-meta">
+                {scanProgress.stage === 'verify'
+                  ? `已验证 ${scanProgress.current} / ${scanProgress.total} 只基金`
+                  : `已处理 ${scanProgress.current} / ${scanProgress.total} 张图片`}
               </div>
-              <div className="submodal-actions">
-                <button className="btn secondary" type="button" onClick={closeOcrImport}>
-                  取消
-                </button>
-                <button className="btn" type="button" onClick={handleImportHoldings} disabled={!ocrItems.length}>
-                  同步持仓
-                </button>
+            )}
+            <button className="btn danger" onClick={cancelScan}>
+              终止识别
+            </button>
+          </div>
+        </div>
+      )}
+
+      {scanConfirmOpen && (
+        <div className="submodal">
+          <div className="submodal-backdrop" onClick={() => setScanConfirmOpen(false)} />
+          <div className="submodal-card scan-confirm-card">
+            <div className="submodal-header scan-header">
+              <h4>确认导入持仓</h4>
+              <button className="mini-btn" onClick={() => setScanConfirmOpen(false)}>关闭</button>
+            </div>
+            {scannedFunds.length === 0 ? (
+              <div className="scan-desc">
+                {scanError || '未识别到有效的持仓信息，请尝试更清晰的截图或重新截取完整列表。'}
               </div>
+            ) : (
+              <div className="scan-list">
+                {scannedFunds.map((item) => {
+                  const isSelected = selectedScannedCodes.has(item.code);
+                  const isAdded = item.status === 'added';
+                  const isInvalid = item.status === 'invalid';
+                  const hasMetrics = item.amount !== undefined && item.profit !== undefined;
+                  const isDisabled = isAdded || isInvalid || !hasMetrics;
+                  const codeLabel = item.code.startsWith('unknown-') ? '未识别代码' : `#${item.code}`;
+                  return (
+                    <button
+                      key={item.code}
+                      type="button"
+                      className={`scan-item ${isSelected ? 'selected' : ''} ${isAdded ? 'added' : ''}`}
+                      onClick={() => {
+                        if (!isDisabled) toggleScannedCode(item.code);
+                      }}
+                      disabled={isDisabled}
+                    >
+                      <div className="scan-item-info">
+                        <strong>{item.name || (isInvalid ? '未找到基金' : '未知基金')}</strong>
+                        <span>{codeLabel}</span>
+                      </div>
+                      <div className="scan-item-metrics">
+                        <strong>{formatMoney(item.amount ?? null)}</strong>
+                        <span className={classByValue(item.profit ?? null)}>
+                          {formatSignedMoney(item.profit ?? null)}
+                        </span>
+                      </div>
+                      {isAdded ? (
+                        <span className="scan-tag">已添加</span>
+                      ) : isInvalid ? (
+                        <span className="scan-tag">未找到</span>
+                      ) : !hasMetrics ? (
+                        <span className="scan-tag">缺少金额/收益</span>
+                      ) : (
+                        <span className="scan-check">{isSelected ? '已选' : '选择'}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div className="scan-actions">
+              <button className="btn secondary" onClick={() => setScanConfirmOpen(false)}>
+                取消
+              </button>
+              <button className="btn" onClick={confirmScanImport} disabled={selectedScannedCodes.size === 0}>
+                确认导入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isScanImporting && (
+        <div className="submodal">
+          <div className="submodal-backdrop" />
+          <div className="submodal-card scan-progress-card">
+            <div className="loading-indicator scan-spinner" />
+            <div className="scan-progress-title">正在导入持仓…</div>
+            {scanImportProgress.total > 0 && (
+              <div className="scan-progress-meta">
+                进度 {scanImportProgress.current} / {scanImportProgress.total}
+              </div>
+            )}
+            <div className="scan-progress-meta">
+              成功 {scanImportProgress.success}，失败 {scanImportProgress.failed}
             </div>
           </div>
         </div>

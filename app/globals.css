@@ -1630,7 +1630,7 @@
     .batch-card {
       width: min(860px, 92vw);
       max-width: 860px;
-      padding: 10px 12px;
+      padding: 12px 14px;
       height: min(86vh, 720px);
       max-height: 86vh;
       display: flex;
@@ -1672,7 +1672,8 @@
     }
 
     .batch-layout {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
       gap: 16px;
       align-items: stretch;
     }
@@ -1726,6 +1727,7 @@
       border: 1px solid var(--glass-border);
       background: rgba(255, 255, 255, 0.7);
       box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+      min-width: 0;
     }
 
     .batch-ocr-title {
@@ -1733,9 +1735,21 @@
       color: var(--muted);
     }
 
+    .batch-ocr-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .batch-ocr-hint {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
     .batch-ocr textarea {
       width: 100%;
-      min-height: 120px;
+      min-height: 160px;
       border: 1px solid var(--glass-border);
       border-radius: 10px;
       padding: 8px 10px;
@@ -1744,6 +1758,166 @@
       background: rgba(255, 255, 255, 0.85);
       resize: vertical;
       color: var(--ink);
+    }
+
+    .scan-card {
+      width: min(520px, 92vw);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .scan-header {
+      align-items: center;
+    }
+
+    .scan-desc {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .scan-desc span {
+      color: var(--primary);
+      font-weight: 600;
+      margin: 0 4px;
+    }
+
+    .scan-dropzone {
+      border: 1px dashed rgba(59, 130, 246, 0.5);
+      background: rgba(239, 246, 255, 0.7);
+      color: var(--muted);
+      padding: 20px 16px;
+      border-radius: 14px;
+      text-align: center;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+    }
+
+    .scan-dropzone.dragging {
+      border-color: var(--primary);
+      background: rgba(219, 234, 254, 0.8);
+      color: var(--primary);
+    }
+
+    .scan-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .scan-progress-card {
+      width: min(360px, 90vw);
+      padding: 20px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .scan-spinner {
+      width: 38px;
+      height: 38px;
+      border: 3px solid rgba(148, 163, 184, 0.4);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .scan-progress-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .scan-progress-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .scan-confirm-card {
+      width: min(560px, 92vw);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .scan-list {
+      max-height: 340px;
+      overflow-y: auto;
+      display: grid;
+      gap: 10px;
+    }
+
+    .scan-item {
+      border: 1px solid var(--glass-border);
+      background: rgba(255, 255, 255, 0.85);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 16px;
+      cursor: pointer;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .scan-item.selected {
+      border-color: rgba(59, 130, 246, 0.6);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+    }
+
+    .scan-item.added {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    .scan-item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: left;
+    }
+
+    .scan-item-info span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .scan-item-metrics {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      font-variant-numeric: tabular-nums;
+      min-width: 140px;
+    }
+
+    .scan-item-metrics strong {
+      font-size: 14px;
+      color: var(--text);
+    }
+
+    .scan-item-metrics span {
+      font-size: 12px;
+    }
+
+    .scan-tag,
+    .scan-check {
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.12);
+      color: var(--primary);
+    }
+
+    .scan-tag {
+      background: rgba(148, 163, 184, 0.2);
+      color: var(--muted);
     }
 
     .mini-btn--icon {
@@ -1803,6 +1977,8 @@
       padding: 6px 10px;
       background: rgba(255, 255, 255, 0.75);
       overflow: hidden;
+      max-width: 100%;
+      min-width: 0;
     }
 
     .ocr-ticker-track {
@@ -1873,7 +2049,7 @@
     .batch-list {
       display: grid;
       gap: 8px;
-      padding: 10px;
+      padding: 8px;
       border-radius: 12px;
       border: 1px solid var(--glass-border);
       background: rgba(255, 255, 255, 0.6);

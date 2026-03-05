@@ -5,7 +5,11 @@ async function getWorker() {
   if (workerPromise) return workerPromise;
   workerPromise = (async () => {
     const Tesseract = await import('tesseract.js');
-    const worker = await Tesseract.createWorker('chi_sim');
+    const worker = await Tesseract.createWorker('chi_sim+eng');
+    await worker.setParameters({
+      tessedit_pageseg_mode: '6',
+      preserve_interword_spaces: '1'
+    });
     workerInstance = worker;
     return worker;
   })();
