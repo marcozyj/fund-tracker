@@ -25,8 +25,6 @@ import {
 } from '../../lib/client-fund';
 import { classByValue, containsCjk, formatMoney, formatMoneyWithSymbol, formatPct, normalizeCode, toNumber } from '../../lib/utils';
 import { computeCostUnit, computeHoldingView, computeMetrics, resolveDailyPct } from '../../lib/metrics';
-import { detectFundFromText, parseBatchText } from '../../lib/ocr';
-import { recognizeImage } from '../../lib/ocr-client';
 import FundCard from './FundCard';
 import FundModal from './FundModal';
 
@@ -191,21 +189,6 @@ export default function AppShell() {
   const [searchResults, setSearchResults] = useState<SearchItem[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const [quickImportOpen, setQuickImportOpen] = useState(false);
-  const [quickImportSource, setQuickImportSource] = useState<string | null>(null);
-  const [quickImportTarget, setQuickImportTarget] = useState('');
-  const [quickImportDetected, setQuickImportDetected] = useState('');
-  const [quickImportResolved, setQuickImportResolved] = useState<{ code: string; name: string } | null>(null);
-  const [, setQuickImportImage] = useState<File | null>(null);
-  const [quickImportPreview, setQuickImportPreview] = useState('');
-  const [quickImportText, setQuickImportText] = useState('');
-  const [quickImportLoading, setQuickImportLoading] = useState(false);
-  const [quickImportItems, setQuickImportItems] = useState<BatchTradeInput[]>([]);
-  const [quickImportSelected, setQuickImportSelected] = useState<Record<string, boolean>>({});
-  const [quickImportEdits, setQuickImportEdits] = useState<Record<string, { amount: string; shares: string }>>({});
-  const [quickImportError, setQuickImportError] = useState('');
-  const quickImportSearchTimerRef = useRef<number | null>(null);
-
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<'holding' | 'watchlist' | null>(null);
   const [holdingMethod, setHoldingMethod] = useState<'amount' | 'shares'>('amount');
@@ -271,16 +254,6 @@ export default function AppShell() {
       name: fundCache[code]?.name || ''
     }));
   }, [holdings, watchlist, fundCache]);
-  const quickImportOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    fundCandidates.forEach((item) => {
-      map.set(item.code, item.name || item.code);
-    });
-    if (quickImportResolved && !map.has(quickImportResolved.code)) {
-      map.set(quickImportResolved.code, quickImportResolved.name || quickImportResolved.code);
-    }
-    return Array.from(map.entries()).map(([code, name]) => ({ code, name }));
-  }, [fundCandidates, quickImportResolved]);
   const selectedOperations = useMemo(() => {
     if (!selectedCode) return [];
     const list = operations.filter((op) => op.code === selectedCode);
@@ -1020,175 +993,6 @@ export default function AppShell() {
     setSearchOpen(true);
   }
 
-  function openQuickImport(code?: string) {
-    setQuickImportSource(code ?? null);
-    setQuickImportTarget(code ?? '');
-    setQuickImportDetected(code ?? '');
-    if (code) {
-      const name = fundCache[code]?.name || code;
-      setQuickImportResolved({ code, name });
-    } else {
-      setQuickImportResolved(null);
-    }
-    setQuickImportImage(null);
-    setQuickImportPreview('');
-    setQuickImportText('');
-    setQuickImportItems([]);
-    setQuickImportSelected({});
-    setQuickImportEdits({});
-    setQuickImportLoading(false);
-    setQuickImportError('');
-    setQuickImportOpen(true);
-  }
-
-  function closeQuickImport() {
-    if (quickImportSearchTimerRef.current) {
-      window.clearTimeout(quickImportSearchTimerRef.current);
-      quickImportSearchTimerRef.current = null;
-    }
-    setQuickImportOpen(false);
-    setQuickImportError('');
-  }
-
-  const shouldLookupFund = (query: string) => {
-    const trimmed = query.trim();
-    if (!trimmed) return false;
-    if (/^\d+$/.test(trimmed)) return trimmed.length >= 6;
-    return trimmed.length >= 2;
-  };
-
-  const lookupFundForQuickImport = async (query: string, showAlert = true) => {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setQuickImportTarget('');
-      setQuickImportResolved(null);
-      return;
-    }
-    try {
-      let list: any = [];
-      if (USE_DIRECT_API) {
-        list = await searchFundsClient(trimmed, 8);
-      } else {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`);
-        if (!res.ok) return;
-        list = await res.json();
-      }
-      if (!Array.isArray(list) || !list.length) {
-        setQuickImportTarget('');
-        setQuickImportResolved(null);
-        if (showAlert) window.alert('未找到该基金');
-        return;
-      }
-      let picked = list[0];
-      if (/^\d{6}$/.test(trimmed)) {
-        const exact = list.find((item) => item.code === trimmed);
-        if (exact) picked = exact;
-      }
-      setQuickImportTarget(picked.code);
-      setQuickImportResolved({ code: picked.code, name: picked.name || picked.code });
-    } catch {
-      // ignore
-    }
-  };
-
-  const parseNumericInput = (value: string) => {
-    const cleaned = value.replace(/,/g, '').trim();
-    if (!cleaned) return null;
-    const num = Number(cleaned);
-    return Number.isFinite(num) ? num : null;
-  };
-
-  const updateQuickValue = (id: string, field: 'amount' | 'shares', value: string) => {
-    setQuickImportEdits((prev) => ({
-      ...prev,
-      [id]: { amount: prev[id]?.amount ?? '', shares: prev[id]?.shares ?? '', [field]: value }
-    }));
-    const parsed = parseNumericInput(value);
-    setQuickImportItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: parsed } : item))
-    );
-  };
-
-  const handleQuickFileChange = (event: any) => {
-    const file = event.target.files?.[0] || null;
-    setQuickImportImage(file);
-    if (!file) {
-      setQuickImportPreview('');
-      setQuickImportItems([]);
-      setQuickImportSelected({});
-      setQuickImportEdits({});
-      setQuickImportText('');
-      setQuickImportDetected('');
-      setQuickImportError('');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setQuickImportPreview(String(reader.result || ''));
-    };
-    reader.readAsDataURL(file);
-    handleQuickOcr(file);
-  };
-
-  const handleQuickOcr = async (file: File) => {
-    setQuickImportLoading(true);
-    setQuickImportError('');
-    try {
-      const text = await recognizeImage(file);
-      setQuickImportText(text);
-      const items = parseBatchText(text);
-      setQuickImportItems(items);
-      if (!items.length) {
-        setQuickImportError('未识别到交易记录，请换更清晰的截图');
-      }
-      const edits: Record<string, { amount: string; shares: string }> = {};
-      items.forEach((item) => {
-        edits[item.id] = {
-          amount: item.amount !== null && item.amount !== undefined ? String(item.amount) : '',
-          shares: item.shares !== null && item.shares !== undefined ? String(item.shares) : ''
-        };
-      });
-      setQuickImportEdits(edits);
-      const selected: Record<string, boolean> = {};
-      items.forEach((item) => {
-        selected[item.id] = true;
-      });
-      setQuickImportSelected(selected);
-
-      const detected = detectFundFromText(text, fundCandidates);
-      const detectedCode = detected?.code || '';
-      setQuickImportDetected(detectedCode);
-      if (detectedCode) {
-        if (shouldLookupFund(detectedCode)) {
-          await lookupFundForQuickImport(detectedCode, true);
-        } else {
-          setQuickImportTarget('');
-          setQuickImportResolved(null);
-        }
-      } else if (quickImportSource) {
-        setQuickImportDetected(quickImportSource);
-        setQuickImportTarget(quickImportSource);
-        setQuickImportResolved({
-          code: quickImportSource,
-          name: fundCache[quickImportSource]?.name || quickImportSource
-        });
-      } else {
-        setQuickImportTarget('');
-        setQuickImportResolved(null);
-      }
-    } catch {
-      setQuickImportText('');
-      setQuickImportItems([]);
-      setQuickImportSelected({});
-      setQuickImportEdits({});
-      setQuickImportDetected('');
-      setQuickImportResolved(null);
-      setQuickImportError('识别失败，请检查网络或换更清晰的截图');
-    } finally {
-      setQuickImportLoading(false);
-    }
-  };
-
   async function resolveFeeRate(code: string) {
     const normalized = normalizeCode(code);
     if (!normalized) return null;
@@ -1213,18 +1017,6 @@ export default function AppShell() {
       return null;
     }
   }
-
-  const handleQuickImport = async () => {
-    if (!quickImportTarget) return;
-    const selectedItems = quickImportItems.filter((item) => quickImportSelected[item.id]);
-    if (!selectedItems.length) return;
-    const feeRate = await resolveFeeRate(quickImportTarget);
-    await applyBatchImport(quickImportTarget, selectedItems, {
-      updateForm: quickImportTarget === selectedCode,
-      feeRate
-    });
-    closeQuickImport();
-  };
 
   function openModal(code: string, source: 'holding' | 'watchlist' | '' = '') {
     const normalized = normalizeCode(code);
@@ -2317,14 +2109,6 @@ export default function AppShell() {
           <div className="view-toggle">
             <button
               type="button"
-              className="mini-btn mini-btn--wide"
-              onClick={() => openQuickImport()}
-              aria-label="截图添加"
-            >
-              截图添加
-            </button>
-            <button
-              type="button"
               className={`mini-btn ${holdingViewMode === 'card' ? 'active' : ''}`}
               onClick={() => setHoldingViewMode('card')}
               aria-pressed={holdingViewMode === 'card'}
@@ -2440,144 +2224,6 @@ export default function AppShell() {
           ))}
         </div>
       </section>
-
-      {quickImportOpen && (
-        <div className="submodal">
-          <div className="submodal-backdrop" onClick={closeQuickImport} />
-          <div className="submodal-card batch-card">
-            <div className="submodal-header">
-              <h4>截图调仓</h4>
-              <button className="mini-btn" onClick={closeQuickImport}>关闭</button>
-            </div>
-            <div className="submodal-body">
-              <div className="batch-layout">
-                <div className="batch-left">
-                  <label className="form-item">
-                    选择图片
-                    <input type="file" accept="image/*" onChange={handleQuickFileChange} />
-                  </label>
-                  {quickImportPreview ? <img className="batch-preview" src={quickImportPreview} alt="交易记录预览" /> : null}
-                  {quickImportLoading ? <div className="loading-indicator">识别中...</div> : null}
-                  {quickImportError ? <div className="error-text">{quickImportError}</div> : null}
-                </div>
-                <div className="batch-right">
-                  <div className="batch-head">识别结果</div>
-                  <div className="batch-target">
-                    <span>识别基金</span>
-                    <input
-                      type="text"
-                      placeholder="识别基金（代码或名称）"
-                      value={quickImportDetected}
-                      onChange={(event) => {
-                        const value = event.target.value.trim();
-                        setQuickImportDetected(value);
-                        if (quickImportSearchTimerRef.current) {
-                          window.clearTimeout(quickImportSearchTimerRef.current);
-                        }
-                        if (!shouldLookupFund(value)) {
-                          setQuickImportTarget('');
-                          setQuickImportResolved(null);
-                          return;
-                        }
-                        quickImportSearchTimerRef.current = window.setTimeout(() => {
-                          lookupFundForQuickImport(value, true);
-                        }, 300);
-                      }}
-                    />
-                  </div>
-                  <div className="batch-target">
-                    <span>导入到</span>
-                    <select
-                      value={quickImportTarget}
-                      onChange={(event) => setQuickImportTarget(event.target.value)}
-                    >
-                      <option value="">请选择基金</option>
-                      {quickImportOptions.map((item) => (
-                        <option key={item.code} value={item.code}>
-                          {item.name ? `${item.name} (${item.code})` : item.code}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {quickImportItems.length ? (
-                    <div className="batch-list">
-                      {quickImportItems.map((item) => {
-                        const label = item.type === 'add' ? '加仓' : '减仓';
-                        const edit = quickImportEdits[item.id] || { amount: '', shares: '' };
-                        const showAmount = item.type === 'add' || item.amount !== null;
-                        const showShares = item.type === 'reduce' || item.shares !== null;
-                        const timeLabel = item.time ? ` ${item.time}` : '';
-                        const timingLabel = item.timing === 'after' ? '15:00后' : '15:00前';
-                        return (
-                          <label key={item.id} className="batch-item">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(quickImportSelected[item.id])}
-                              onChange={(e) =>
-                                setQuickImportSelected((prev) => ({ ...prev, [item.id]: e.target.checked }))
-                              }
-                            />
-                            <div className="batch-info">
-                              <div className="batch-row">
-                                <strong className={item.type === 'add' ? 'market-up' : 'market-down'}>{label}</strong>
-                                <div className="batch-value">
-                                  {showAmount ? (
-                                    <div className="batch-input">
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.01"
-                                        value={edit.amount}
-                                        onChange={(e) => updateQuickValue(item.id, 'amount', e.target.value)}
-                                      />
-                                      <span className="batch-unit">元</span>
-                                    </div>
-                                  ) : null}
-                                  {showShares ? (
-                                    <div className="batch-input">
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.01"
-                                        value={edit.shares}
-                                        onChange={(e) => updateQuickValue(item.id, 'shares', e.target.value)}
-                                      />
-                                      <span className="batch-unit">份</span>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <span className="batch-meta">
-                                {item.date}
-                                {timeLabel} · {timingLabel}
-                              </span>
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="empty-state">暂无识别结果</div>
-                  )}
-                </div>
-              </div>
-              <div className="submodal-actions">
-                <button className="btn secondary" type="button" onClick={closeQuickImport}>
-                  取消
-                </button>
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={handleQuickImport}
-                  disabled={!quickImportItems.length || !quickImportTarget}
-                >
-                  导入记录
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <FundModal
         open={Boolean(selectedCode)}
