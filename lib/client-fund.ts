@@ -34,6 +34,18 @@ const FUND_POSITION_URL = 'https://fundf10.eastmoney.com/FundArchivesDatas.aspx?
 const TT_POSITION_URL = 'https://dgs.tiantianfunds.com/merge/m/api/jjxqy2';
 const TT_POSITION_DEVICE_ID = '9a8d612d1a2229b7bf0ffd5ca823d790';
 const TT_POSITION_VALIDMARK = '9a8d612d1a2229b7bf0ffd5ca823d790';
+const TT_FEE_URL = 'https://dgs.tiantianfunds.com/merge/m/api/jjxqy1_2';
+const TT_DEVICE_ID = '64c45625839c28d22f2b422be3e692ba';
+const TT_VALIDMARK = '64c45625839c28d22f2b422be3e692ba';
+const TT_INDEX_FIELDS = 'indexfields=_id,INDEXCODE,BKID,INDEXNAME,INDEXVALUA,NEWINDEXTEXCH,PEP100';
+const TT_FIELDS =
+  'fields=BENCH,ESTDIFF,INDEXNAME,LINKZSB,INDEXCODE,NEWTEXCH,FTYPE,FCODE,BAGTYPE,RISKLEVEL,TTYPENAME,PTDT_FY,PTDT_TRY,PTDT_TWY,PTDT_Y,DWDT_FY,DWDT_TRY,DWDT_TWY,DWDT_Y,MBDT_FY,MBDT_TRY,MBDT_TWY,MBDT_Y,YDDT_FY,YDDT_TRY,YDDT_TWY,YDDT_Y,BFUNDTYPE,YMATCHCODEA,RLEVEL_SZ,RLEVEL_CX,ESTABDATE,JJGS,JJGSID,ENDNAV,FEGMRQ,SHORTNAME,TTYPE,TJDIN,FUNDEXCHG,LISTTEXCHMARK,FSRQ,ISSBDATE,ISSEDATE,FEATURE,DWJZ,LJJZ,MINRG,RZDF,PERIODNAME,SYL_1N,SYL_LN,SYL_Z,SOURCERATE,RATE,TSRQ,BTYPE,BUY,BENCHCODE,BENCH_CORR,TRKERROR,BENCHRATIO,NEWINDEXTEXCH,BESTDT_STRATEGY,BESTDT_Y,BESTDT_TWY,BESTDT_TRY,BESTDT_FY';
+const TT_UNIQUE_FIELDS =
+  'fundUniqueInfo_fIELDS=FCODE,STDDEV1,STDDEV_1NRANK,STDDEV_1NFSC,STDDEV3,STDDEV_3NRANK,STDDEV_3NFSC,STDDEV5,STDDEV_5NRANK,STDDEV_5NFSC,SHARP1,SHARP_1NRANK,SHARP_1NFSC,SHARP3,SHARP_3NRANK,SHARP_3NFSC,SHARP5,SHARP_5NRANK,SHARP_5NFSC,MAXRETRA1,MAXRETRA_1NRANK,MAXRETRA_1NFSC,MAXRETRA3,MAXRETRA_3NRANK,MAXRETRA_3NFSC,MAXRETRA5,MAXRETRA_5NRANK,MAXRETRA_5NFSC,TRKERROR1,TRKERROR_1NFSC,TRKERROR3,TRKERROR_3NFSC,TRKERROR5,TRKERROR_5NFSC';
+const TT_UNIQUE_FL_FIELDS =
+  'fundUniqueInfo_fLFIELDS=FCODE,BUSINESSTYPE,BUSINESSTEXT,BUSINESSCODE,BUSINESSSUBTYPE,MARK';
+const TT_CFH_FIELDS = 'cfhFundFInfo_fields=INVESTMENTIDEAR,INVESTMENTIDEARIMG';
+const TT_RELATE_FIELDS = 'relateThemeFields=FCODE,SEC_CODE,SEC_NAME,CORR_1Y,OL2TOP';
 const FUND_SEARCH_URL =
   'https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key=';
 const STOCK_QUOTE_URL = 'https://push2.eastmoney.com/api/qt/ulist.np/get';
@@ -123,6 +135,48 @@ async function fetchJsonPost(url: string, body: string, headers?: Record<string,
   });
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return res.json();
+}
+
+function parseRateValue(value: any): number | null {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  const match = raw.match(/([\d.]+)%/);
+  if (match && match[1]) {
+    const num = Number(match[1]);
+    return Number.isFinite(num) ? num : null;
+  }
+  return null;
+}
+
+async function getFeeRateFromTiantian(code: string): Promise<number | null> {
+  const params = new URLSearchParams();
+  params.set('deviceid', TT_DEVICE_ID);
+  params.set('version', '9.9.9');
+  params.set('appVersion', '6.5.5');
+  params.set('product', 'EFund');
+  params.set('plat', 'Web');
+  params.set('uid', '');
+  params.set('fcode', code);
+  params.set('indexfields', TT_INDEX_FIELDS.replace(/^indexfields=/, ''));
+  params.set('fields', TT_FIELDS.replace(/^fields=/, ''));
+  params.set('fundUniqueInfo_fIELDS', TT_UNIQUE_FIELDS.replace(/^fundUniqueInfo_fIELDS=/, ''));
+  params.set('fundUniqueInfo_fLFIELDS', TT_UNIQUE_FL_FIELDS.replace(/^fundUniqueInfo_fLFIELDS=/, ''));
+  params.set('cfhFundFInfo_fields', TT_CFH_FIELDS.replace(/^cfhFundFInfo_fields=/, ''));
+  params.set('ISRG', '0');
+  params.set('relateThemeFields', TT_RELATE_FIELDS.replace(/^relateThemeFields=/, ''));
+
+  const data = await fetchJsonPost(TT_FEE_URL, params.toString(), {
+    validmark: TT_VALIDMARK
+  });
+  const rateInfo = data?.data?.rateInfo || null;
+  const baseInfo = Array.isArray(data?.data?.baseInfo) ? data.data.baseInfo[0] : null;
+  if (rateInfo?.sg && Array.isArray(rateInfo.sg) && rateInfo.sg.length) {
+    const first = rateInfo.sg[0];
+    const rate = parseRateValue(first?.rate);
+    if (rate !== null) return rate;
+  }
+  const rate = parseRateValue(baseInfo?.RATE) ?? parseRateValue(baseInfo?.SOURCERATE);
+  return rate;
 }
 
 function queueTask<T>(queue: Promise<unknown>, task: () => Promise<T>) {
@@ -925,11 +979,10 @@ export async function getFundFeeRateClient(code: string): Promise<number | null>
   const normalized = normalizeCode(code);
   if (!normalized) return null;
   try {
-    const url = `${FUND_FEE_API_URL}&code=${normalized}`;
-    const data = await loadApidata(url);
-    const content = data?.content || '';
-    return extractFeeRateFromContent(content);
+    const ttRate = await getFeeRateFromTiantian(normalized);
+    if (ttRate !== null) return ttRate;
   } catch {
-    return null;
+    // fallback to other source
   }
+  return null;
 }

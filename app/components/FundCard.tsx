@@ -1,8 +1,8 @@
 'use client';
 
 import type { FundData, Holding } from '../../lib/types';
-import { classByValue, formatMoney, formatMoneyWithSymbol, formatNumber, formatPct } from '../../lib/utils';
-import { computeHoldingView, trendState, resolveDailyPct } from '../../lib/metrics';
+import { classByValue, formatPct } from '../../lib/utils';
+import { trendState, resolveDailyPct } from '../../lib/metrics';
 
 export default function FundCard({
   variant,
@@ -10,6 +10,8 @@ export default function FundCard({
   data,
   holding,
   isHolding,
+  className,
+  style,
   onOpen
 }: {
   variant: 'holding' | 'watchlist';
@@ -17,6 +19,8 @@ export default function FundCard({
   data?: FundData;
   holding?: Holding;
   isHolding?: boolean;
+  className?: string;
+  style?: React.CSSProperties;
   onOpen: () => void;
 }) {
   const metrics = data ? data.metrics : null;
@@ -29,75 +33,16 @@ export default function FundCard({
   const volClass = metrics ? classByValue(metrics.volatility) : '';
 
   if (variant === 'holding' && holding) {
-    const view = computeHoldingView(holding, data);
-    const profitValue = view.profit;
-    const profitClass = classByValue(profitValue);
-    const dailyProfit = view.amount !== null && dailyPct !== null ? (view.amount * dailyPct) / 100 : null;
-    const dailyClass = classByValue(dailyProfit);
-    const dailyRateClass = classByValue(dailyPct);
-    const holdingRate =
-      view.amount !== null &&
-      view.amount !== undefined &&
-      profitValue !== null &&
-      profitValue !== undefined &&
-      view.amount - profitValue !== 0
-        ? (profitValue / (view.amount - profitValue)) * 100
-        : null;
-    const holdingRateClass = classByValue(holdingRate);
-    const holdingShares =
-      holding.shares !== null && holding.shares !== undefined
-        ? holding.shares
-        : view.amount !== null && view.amount !== undefined && data?.latestNav
-          ? view.amount / data.latestNav
-          : null;
-
     return (
-      <div className="fund-card clickable" onClick={onOpen}>
-        <div className="fund-title">
-          <div>
-            <h4>{data ? data.name : holding.code}</h4>
-            <div className="fund-code">{holding.code}</div>
-          </div>
-          <div className="fund-title-meta">
-            <div className={`status ${stateTag.cls}`}>{stateTag.label}</div>
-          </div>
-        </div>
-        <div className="holding-layout">
-          <div className="holding-left">
-            <span>持有金额</span>
-            <strong>{formatMoneyWithSymbol(view.amount)}</strong>
-            <div className="holding-sub-row">
-              <em className="holding-sub">
-                持有份额 {holdingShares !== null && holdingShares !== undefined ? formatNumber(holdingShares, 2) : '--'}
-              </em>
-              <em className="holding-sub">
-                持仓成本价 {view.costUnit !== null && view.costUnit !== undefined ? formatNumber(view.costUnit, 4) : '--'}
-              </em>
-            </div>
-          </div>
-          <div className="holding-right">
-            <div className="holding-row">
-              <div className="holding-main">
-                <span>当日收益</span>
-                <strong className={dailyClass}>{dailyProfit === null ? '--' : formatMoney(dailyProfit)}</strong>
-              </div>
-              <div className={`holding-rate ${dailyRateClass}`}>{formatPct(dailyPct ?? null)}</div>
-            </div>
-            <div className="holding-row">
-              <div className="holding-main">
-                <span>持有收益</span>
-                <strong className={profitClass}>{formatMoney(profitValue)}</strong>
-              </div>
-              <div className={`holding-rate ${holdingRateClass}`}>{formatPct(holdingRate)}</div>
-            </div>
-          </div>
-        </div>
+      <div className={`fund-card clickable ${className || ''}`.trim()} style={style} onClick={onOpen}>
+        <div className="fund-tile-name">{data ? data.name : holding.code}</div>
+        <div className="fund-tile-pct">{dailyPct !== null && dailyPct !== undefined ? formatPct(dailyPct) : '--'}</div>
       </div>
     );
   }
 
   return (
-    <div className="fund-card clickable" onClick={onOpen}>
+    <div className={`fund-card clickable ${className || ''}`.trim()} style={style} onClick={onOpen}>
       <div className="fund-title">
         <div>
           <h4>{data ? data.name : code}</h4>

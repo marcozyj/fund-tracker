@@ -146,6 +146,100 @@ function findNavFromHistoryTable(
   return findNavInHistoryStrict(date, timing, combined);
 }
 
+type TreemapItem = {
+  code: string;
+  holding: Holding;
+  weight: number;
+  pct: number | null;
+};
+
+type TreemapTile = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  item: TreemapItem;
+};
+
+function treemapWorst(row: Array<{ area: number }>, w: number) {
+  if (!row.length) return Infinity;
+  const sum = row.reduce((acc, item) => acc + item.area, 0);
+  const max = Math.max(...row.map((item) => item.area));
+  const min = Math.min(...row.map((item) => item.area));
+  if (min <= 0) return Infinity;
+  const w2 = w * w;
+  return Math.max((w2 * max) / (sum * sum), (sum * sum) / (w2 * min));
+}
+
+function treemapLayoutRow(
+  row: Array<{ area: number; item: TreemapItem }>,
+  rect: { x: number; y: number; w: number; h: number }
+) {
+  const sum = row.reduce((acc, item) => acc + item.area, 0);
+  const tiles: TreemapTile[] = [];
+  if (rect.w >= rect.h) {
+    const rowHeight = sum / rect.w;
+    let x = rect.x;
+    row.forEach((entry) => {
+      const width = entry.area / rowHeight;
+      tiles.push({ x, y: rect.y, w: width, h: rowHeight, item: entry.item });
+      x += width;
+    });
+    return {
+      tiles,
+      rect: { x: rect.x, y: rect.y + rowHeight, w: rect.w, h: rect.h - rowHeight }
+    };
+  }
+  const rowWidth = sum / rect.h;
+  let y = rect.y;
+  row.forEach((entry) => {
+    const height = entry.area / rowWidth;
+    tiles.push({ x: rect.x, y, w: rowWidth, h: height, item: entry.item });
+    y += height;
+  });
+  return {
+    tiles,
+    rect: { x: rect.x + rowWidth, y: rect.y, w: rect.w - rowWidth, h: rect.h }
+  };
+}
+
+function buildTreemap(items: TreemapItem[], width: number, height: number) {
+  if (!items.length || width <= 0 || height <= 0) return [];
+  const sorted = [...items].sort((a, b) => b.weight - a.weight);
+  const rowCount = sorted.length <= 6 ? 2 : 3;
+  const rowHeight = height / rowCount;
+  const rows = Array.from({ length: rowCount }, () => ({ items: [] as TreemapItem[], weight: 0 }));
+
+  sorted.forEach((item) => {
+    let target = rows[0];
+    rows.forEach((row) => {
+      if (row.weight < target.weight) target = row;
+    });
+    target.items.push(item);
+    target.weight += item.weight;
+  });
+
+  const tiles: TreemapTile[] = [];
+  rows.forEach((row, rowIndex) => {
+    const totalWeight = row.weight > 0 ? row.weight : row.items.length;
+    let x = 0;
+    row.items.forEach((item, idx) => {
+      const ratio = totalWeight > 0 ? (item.weight / totalWeight) : 1 / row.items.length;
+      const w = idx === row.items.length - 1 ? width - x : width * ratio;
+      tiles.push({
+        x,
+        y: rowIndex * rowHeight,
+        w,
+        h: rowHeight,
+        item
+      });
+      x += w;
+    });
+  });
+
+  return tiles;
+}
+
 function createOperationId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
@@ -186,6 +280,49 @@ export default function AppShell() {
   const [performancePeriod, setPerformancePeriod] = useState('1y');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [holdingViewMode, setHoldingViewMode] = useState<'card' | 'table'>('card');
+  const [treemapSize, setTreemapSize] = useState({ width: 0, height: 0 });
+
+  const holdingAmountRank = useMemo(() => {
+    if (!holdings.length) return new Map<string, number>();
+    const ranked = holdings
+      .map((holding) => {
+        const view = computeHoldingView(holding, fundCache[holding.code]);
+        return { code: holding.code, amount: view.amount ?? 0 };
+      })
+      .sort((a, b) => b.amount - a.amount);
+    const map = new Map<string, number>();
+    ranked.forEach((item, index) => {
+      map.set(item.code, index);
+    });
+    return map;
+  }, [holdings, fundCache]);
+
+  const sortedHoldings = useMemo(() => {
+    if (!holdings.length) return [];
+    return [...holdings].sort((a, b) => {
+      const rankA = holdingAmountRank.get(a.code) ?? Number.MAX_SAFE_INTEGER;
+      const rankB = holdingAmountRank.get(b.code) ?? Number.MAX_SAFE_INTEGER;
+      if (rankA === rankB) return a.code.localeCompare(b.code);
+      return rankA - rankB;
+    });
+  }, [holdings, holdingAmountRank]);
+
+  const treemapTiles = useMemo(() => {
+    if (!sortedHoldings.length || treemapSize.width <= 0 || treemapSize.height <= 0) return [];
+    const items: TreemapItem[] = sortedHoldings.map((holding) => {
+      const view = computeHoldingView(holding, fundCache[holding.code]);
+      const amount = view.amount ?? 0;
+      const weight = Number.isFinite(amount) && amount > 0 ? amount : 1;
+      const pct = resolveDailyPct(fundCache[holding.code]);
+      return {
+        code: holding.code,
+        holding,
+        weight,
+        pct: pct === null || pct === undefined ? null : pct
+      };
+    });
+    return buildTreemap(items, treemapSize.width, treemapSize.height);
+  }, [sortedHoldings, fundCache, treemapSize]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchItem[]>([]);
@@ -233,10 +370,35 @@ export default function AppShell() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const abortScanRef = useRef(false);
+  const treemapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     historyCacheRef.current = historyTableCache;
   }, [historyTableCache]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const node = treemapRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    let frame = 0;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (frame) cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        setTreemapSize((prev) => {
+          if (Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1) return prev;
+          return { width, height };
+        });
+      });
+    });
+    observer.observe(node);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2657,22 +2819,63 @@ export default function AppShell() {
           </div>
         </div>
         {holdingViewMode === 'card' ? (
-          <div className="fund-grid" id="fund-grid">
+          <div className="fund-treemap" id="fund-grid" ref={treemapRef}>
             {!holdings.length && <div className="empty-state">还没有持仓基金，请从顶部搜索添加。</div>}
-            {holdings.map((holding) => (
-              <FundCard
-                key={holding.code}
-                variant="holding"
-                code={holding.code}
-                data={fundCache[holding.code]}
-                holding={holding}
-                onOpen={() => openModal(holding.code, 'holding')}
-              />
-            ))}
+            {treemapTiles.map((tile) => {
+              const pct = tile.item.pct;
+              const pctClass =
+                pct === null || pct === undefined ? 'tile-flat' : pct >= 0 ? 'tile-up' : 'tile-down';
+              const absPct = pct === null || pct === undefined ? 0 : Math.min(Math.abs(pct) / 3, 1);
+              let tileColor: string | undefined;
+              if (pct === null || pct === undefined) {
+                tileColor = '#4b505e';
+              } else if (pct >= 0) {
+                const light = 68 - absPct * 28;
+                tileColor = `hsl(350, 65%, ${light}%)`;
+              } else {
+                const light = 58 - absPct * 20;
+                tileColor = `hsl(145, 45%, ${light}%)`;
+              }
+              const isTiny = tile.w * tile.h < 2600;
+              return (
+                <FundCard
+                  key={tile.item.code}
+                  variant="holding"
+                  code={tile.item.code}
+                  data={fundCache[tile.item.code]}
+                  holding={tile.item.holding}
+                  className={`fund-card--tile ${pctClass} ${isTiny ? 'tile--tiny' : ''}`}
+                  style={{
+                    left: `${tile.x}px`,
+                    top: `${tile.y}px`,
+                    width: `${tile.w}px`,
+                    height: `${tile.h}px`,
+                    backgroundColor: tileColor
+                  }}
+                  onOpen={() => openModal(tile.item.code, 'holding')}
+                />
+              );
+            })}
           </div>
         ) : (
           <div className="fund-list" id="fund-list">
             {!holdings.length && <div className="empty-state">还没有持仓基金，请从顶部搜索添加。</div>}
+            {!!holdings.length && (
+              <div className="fund-row fund-row--header">
+                <div className="fund-row-main">
+                  <div className="fund-row-title">基金名称 / 代码</div>
+                </div>
+                <div className="fund-row-metric">
+                  <span>持有金额</span>
+                </div>
+                <div className="fund-row-metric">
+                  <span>持有收益</span>
+                </div>
+                <div className="fund-row-metric">
+                  <span>当日收益</span>
+                </div>
+              </div>
+            )}
             {holdings.map((holding) => {
               const data = fundCache[holding.code];
               const view = computeHoldingView(holding, data);
@@ -2696,7 +2899,7 @@ export default function AppShell() {
               return (
                 <div
                   key={holding.code}
-                  className="fund-row"
+                  className="fund-row fund-row--compact"
                   role="button"
                   tabIndex={0}
                   onClick={() => openModal(holding.code, 'holding')}
@@ -2709,18 +2912,15 @@ export default function AppShell() {
                     <div className="fund-row-code">{holding.code}</div>
                   </div>
                   <div className="fund-row-metric">
-                    <span>持有金额</span>
                     <strong>{formatMoneyWithSymbol(view.amount ?? null)}</strong>
                   </div>
                   <div className="fund-row-metric">
-                    <span>当日收益</span>
-                    <strong className={dailyClass}>{formatMoney(dailyProfit)}</strong>
-                    <em className={`fund-row-sub ${dailyRateClass}`}>{formatPct(dailyPct ?? null)}</em>
-                  </div>
-                  <div className="fund-row-metric">
-                    <span>持有收益</span>
                     <strong className={profitClass}>{formatMoney(view.profit ?? null)}</strong>
                     <em className={`fund-row-sub ${holdingRateClass}`}>{formatPct(holdingRate)}</em>
+                  </div>
+                  <div className="fund-row-metric">
+                    <strong className={dailyClass}>{formatMoney(dailyProfit)}</strong>
+                    <em className={`fund-row-sub ${dailyRateClass}`}>{formatPct(dailyPct ?? null)}</em>
                   </div>
                 </div>
               );
