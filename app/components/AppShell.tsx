@@ -1013,7 +1013,8 @@ export default function AppShell() {
   const SCAN_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 
-  const normalizeOcrText = (value: string) => value.replace(/\s+/g, '').trim();
+  const normalizeOcrText = (value: string) =>
+    value.replace(/\s+/g, '').replace(/[·•()（）【】\[\]_-]/g, '').trim();
 
   const parseNumberTokens = (value: string) => {
     const matches = value.match(/[+-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?|[+-]?\d+(?:\.\d+)?/g) || [];
@@ -1300,7 +1301,19 @@ export default function AppShell() {
         if (noSuffix) variants.add(noSuffix);
         const noSuffixClass = noSuffix.replace(/([A-Z])(?:类)?$/i, '');
         if (noSuffixClass) variants.add(noSuffixClass);
-        return Array.from(variants).filter((item) => item.length >= 4);
+        const noIndex = noSuffixClass.replace(/(中证|上证|国证|沪深|深证|中债|全指|300|500|1000)/g, '');
+        if (noIndex) variants.add(noIndex);
+        const cjkOnly = noIndex.replace(/[^\u4e00-\u9fa5]/g, '');
+        if (cjkOnly) variants.add(cjkOnly);
+        if (cjkOnly.length > 6) {
+          variants.add(cjkOnly.slice(0, 6));
+          variants.add(cjkOnly.slice(-6));
+        }
+        if (cjkOnly.length > 4) {
+          variants.add(cjkOnly.slice(0, 4));
+          variants.add(cjkOnly.slice(-4));
+        }
+        return Array.from(variants).filter((item) => item.length >= 3);
       };
 
       const resolveByName = async (name: string) => {
