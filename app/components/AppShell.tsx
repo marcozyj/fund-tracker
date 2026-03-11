@@ -40,6 +40,7 @@ const LEGACY_KEY = 'steadyfund_portfolio';
 const DEFAULT_WATCHLIST = ['161725', '001632', '005963'];
 const USE_DIRECT_API = true;
 const REFRESH_INTERVAL_KEY = 'fund-tracker-refresh-interval';
+const MOBILE_HOLDING_VIEW_KEY = 'mobile_holding_view';
 const REFRESH_INTERVALS = [
   { label: '5秒', value: 5000 },
   { label: '1分钟', value: 60000 },
@@ -203,10 +204,10 @@ function treemapLayoutRow(
   };
 }
 
-function buildTreemap(items: TreemapItem[], width: number, height: number) {
+function buildTreemap(items: TreemapItem[], width: number, height: number, maxRows = 3) {
   if (!items.length || width <= 0 || height <= 0) return [];
   const sorted = [...items].sort((a, b) => b.weight - a.weight);
-  const rowCount = sorted.length <= 6 ? 2 : 3;
+  const rowCount = Math.max(1, Math.min(maxRows, sorted.length <= 4 ? 2 : maxRows));
   const rowHeight = height / rowCount;
   const rows = Array.from({ length: rowCount }, () => ({ items: [] as TreemapItem[], weight: 0 }));
 
@@ -281,6 +282,10 @@ export default function AppShell() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [holdingViewMode, setHoldingViewMode] = useState<'card' | 'table'>('card');
   const [treemapSize, setTreemapSize] = useState({ width: 0, height: 0 });
+  const [viewportMode, setViewportMode] = useState<'mobile' | 'tablet' | 'desktop'>('desktop');
+
+  const isMobileLayout = viewportMode === 'mobile';
+  const isTabletLayout = viewportMode === 'tablet';
 
   const holdingAmountRank = useMemo(() => {
     if (!holdings.length) return new Map<string, number>();
@@ -309,6 +314,7 @@ export default function AppShell() {
 
   const treemapTiles = useMemo(() => {
     if (!sortedHoldings.length || treemapSize.width <= 0 || treemapSize.height <= 0) return [];
+    const rowLimit = isMobileLayout ? 2 : isTabletLayout ? 3 : 4;
     const items: TreemapItem[] = sortedHoldings.map((holding) => {
       const view = computeHoldingView(holding, fundCache[holding.code]);
       const amount = view.amount ?? 0;
@@ -321,8 +327,8 @@ export default function AppShell() {
         pct: pct === null || pct === undefined ? null : pct
       };
     });
-    return buildTreemap(items, treemapSize.width, treemapSize.height);
-  }, [sortedHoldings, fundCache, treemapSize]);
+    return buildTreemap(items, treemapSize.width, treemapSize.height, rowLimit);
+  }, [sortedHoldings, fundCache, treemapSize, isMobileLayout, isTabletLayout]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchItem[]>([]);
@@ -375,6 +381,53 @@ export default function AppShell() {
   useEffect(() => {
     historyCacheRef.current = historyTableCache;
   }, [historyTableCache]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mobileQuery = window.matchMedia('(max-width: 767px)');
+    const tabletQuery = window.matchMedia('(min-width: 768px) and (max-width: 1023px)');
+    const updateViewportMode = () => {
+      if (mobileQuery.matches) {
+        setViewportMode('mobile');
+        return;
+      }
+      if (tabletQuery.matches) {
+        setViewportMode('tablet');
+        return;
+      }
+      setViewportMode('desktop');
+    };
+    updateViewportMode();
+    const add = (query: MediaQueryList, listener: () => void) => {
+      if (query.addEventListener) query.addEventListener('change', listener);
+      else query.addListener(listener);
+    };
+    const remove = (query: MediaQueryList, listener: () => void) => {
+      if (query.removeEventListener) query.removeEventListener('change', listener);
+      else query.removeListener(listener);
+    };
+    add(mobileQuery, updateViewportMode);
+    add(tabletQuery, updateViewportMode);
+    return () => {
+      remove(mobileQuery, updateViewportMode);
+      remove(tabletQuery, updateViewportMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout || typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem(MOBILE_HOLDING_VIEW_KEY);
+    if (saved === 'card' || saved === 'table') {
+      setHoldingViewMode(saved);
+      return;
+    }
+    setHoldingViewMode('card');
+  }, [isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout || typeof window === 'undefined') return;
+    window.localStorage.setItem(MOBILE_HOLDING_VIEW_KEY, holdingViewMode);
+  }, [holdingViewMode, isMobileLayout]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
