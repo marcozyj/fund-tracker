@@ -462,7 +462,7 @@
 
     .fund-row {
       display: grid;
-      grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
       gap: 12px;
       align-items: center;
       padding: 14px 16px;
@@ -523,6 +523,8 @@
       font-size: 11px;
       color: var(--muted);
       text-align: right;
+      min-width: 0;
+      overflow: hidden;
     }
 
     .fund-row-metric strong {
@@ -754,6 +756,9 @@
       border: 1px solid rgba(255, 255, 255, 0.08);
       box-shadow: none;
       border-radius: 10px;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .fund-card--tile::after {
@@ -780,10 +785,10 @@
       font-weight: 600;
       line-height: 1.25;
       max-width: 100%;
-      display: -webkit-box;
-      -webkit-line-clamp: 3;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+      display: block;
+      overflow-wrap: anywhere;
+      white-space: normal;
+      word-break: break-word;
     }
 
     .fund-tile-pct {
@@ -797,6 +802,23 @@
 
     .fund-card--tile.tile--tiny .fund-tile-pct {
       font-size: clamp(10px, 1vw, 14px);
+    }
+
+    .fund-card--tile.tile--micro {
+      padding: 6px;
+      gap: 4px;
+    }
+
+    .fund-card--tile.tile--micro .fund-tile-name {
+      display: block;
+      font-size: 10px;
+      line-height: 1.15;
+    }
+
+    .fund-card--tile.tile--micro .fund-tile-pct {
+      font-size: clamp(10px, 1.2vw, 13px);
+      line-height: 1.1;
+      white-space: nowrap;
     }
 
     .fund-card.clickable {
@@ -2798,4 +2820,532 @@
         grid-template-columns: repeat(3, 1fr);
       }
 
+    }
+
+    html,
+    body {
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
+    .page,
+    .section,
+    .modal-card,
+    .modal-body,
+    .panel {
+      min-width: 0;
+    }
+
+    @media (max-width: 767px) {
+      :root {
+        --radius: 14px;
+        --gap: 12px;
+      }
+
+      .page {
+        max-width: 100%;
+        padding: 10px 10px calc(16px + env(safe-area-inset-bottom));
+        gap: 14px;
+      }
+
+      .topbar {
+        top: 0;
+        padding: 10px;
+        border-radius: 14px;
+      }
+
+      .brand {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .brand-title h1 {
+        font-size: 18px;
+      }
+
+      .brand-title span {
+        display: none;
+      }
+
+      .topbar-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .search-box {
+        grid-column: 1 / -1;
+        min-width: 0;
+        width: 100%;
+        padding: 8px 10px;
+        min-height: 44px;
+      }
+
+      .search-box input {
+        min-width: 0;
+        width: 100%;
+        font-size: 14px;
+      }
+
+      .pill {
+        grid-column: 1 / 2;
+        width: 100%;
+        justify-content: center;
+        min-height: 44px;
+      }
+
+      .refresh-select {
+        grid-column: 2 / 3;
+      }
+
+      .refresh-select select {
+        min-height: 44px;
+        font-size: 12px;
+        padding: 8px 10px;
+      }
+
+      .topbar-actions .btn {
+        min-height: 44px;
+        padding: 10px 12px;
+      }
+
+      .loading-indicator {
+        grid-column: 1 / -1;
+      }
+
+      .hero {
+        padding: 14px;
+        border-radius: 16px;
+        gap: 12px;
+      }
+
+      .hero h2 {
+        font-size: 20px;
+        margin: 0;
+      }
+
+      .hero-grid {
+        gap: 10px;
+      }
+
+      .hero-toggle {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        transform: none;
+        width: 44px;
+        height: 44px;
+      }
+
+      .hero-asset-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .hero-asset .stat {
+        justify-content: space-between;
+        min-height: 40px;
+      }
+
+      .section {
+        padding: 12px;
+        gap: 12px;
+        border-radius: 14px;
+      }
+
+      .section h3 {
+        font-size: 18px;
+      }
+
+      .section-head {
+        align-items: center;
+      }
+
+      .view-toggle {
+        gap: 6px;
+      }
+
+      .view-toggle .mini-btn {
+        width: 44px;
+        height: 44px;
+      }
+
+      .fund-treemap {
+        height: clamp(280px, 48vh, 420px);
+        border-radius: 12px;
+      }
+
+      .fund-treemap-mobile {
+        background: transparent;
+      }
+
+      .fund-treemap-mobile .fund-card--tile {
+        border-color: rgba(15, 23, 42, 0.12);
+        border-width: 1px;
+        border-radius: 8px;
+      }
+
+      .fund-treemap-mobile .fund-tile-name {
+        font-size: 12px;
+        line-height: 1.2;
+      }
+
+      .fund-treemap-mobile .fund-tile-pct {
+        font-size: 11px;
+      }
+
+      .fund-list {
+        overflow-x: hidden;
+        scrollbar-width: none;
+      }
+
+      .fund-list::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+      }
+
+      .fund-row {
+        min-width: 0;
+        grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(0, 0.95fr));
+        gap: 6px;
+        padding: 8px;
+      }
+
+      .fund-row--header {
+        padding: 6px 8px;
+      }
+
+      .fund-row--header .fund-row-metric span {
+        font-size: 10px;
+        line-height: 1.2;
+      }
+
+      .fund-row-title {
+        font-size: 12px;
+        line-height: 1.25;
+      }
+
+      .fund-row-code {
+        font-size: 10px;
+      }
+
+      .fund-row-metric strong {
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .fund-row-sub {
+        font-size: 9px;
+      }
+
+      .fund-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .fund-grid .fund-card {
+        padding: 12px;
+      }
+
+      .fund-grid .fund-card .fund-metrics {
+        display: none;
+      }
+
+      .fund-grid .fund-card .meta-block:first-child {
+        display: none;
+      }
+
+      .btn,
+      .mini-btn,
+      .icon-btn,
+      .chip-btn {
+        min-height: 44px;
+      }
+
+      .mini-btn {
+        min-width: 44px;
+        padding: 8px 10px;
+      }
+
+      .modal.modal-mobile {
+        padding: 0;
+        align-items: flex-end;
+      }
+
+      .modal.modal-mobile .modal-card {
+        width: 100vw;
+        max-width: 100vw;
+        height: 94dvh;
+        max-height: 94dvh;
+        border-radius: 18px 18px 0 0;
+        padding: 10px 10px calc(14px + env(safe-area-inset-bottom));
+        background: #e7ecf4;
+        animation: sheetIn 220ms ease-out;
+      }
+
+      .modal.modal-mobile .modal-header {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        padding-top: 8px;
+        background: rgba(233, 238, 246, 0.96);
+        border-radius: 10px;
+      }
+
+      .modal.modal-mobile .modal-header::before {
+        content: '';
+        position: absolute;
+        top: -8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 44px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.2);
+      }
+
+      .modal.modal-mobile .modal-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+        overflow-y: auto;
+        max-height: none;
+        padding-right: 0;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .modal.modal-mobile .modal-column {
+        display: grid;
+        gap: 10px;
+        grid-template-rows: auto;
+      }
+
+      .modal.modal-mobile .modal-main {
+        order: 1;
+      }
+
+      .modal.modal-mobile .modal-side {
+        order: 2;
+      }
+
+      .modal.modal-mobile .fund-status-panel {
+        order: 1;
+      }
+
+      .modal.modal-mobile .nav-chart-panel {
+        order: 2;
+      }
+
+      .modal.modal-mobile .history-nav-panel {
+        order: 1;
+      }
+
+      .modal.modal-mobile .positions-panel {
+        order: 2;
+      }
+
+      .modal.modal-mobile .panel {
+        padding: 12px;
+        border-radius: 14px;
+        background: #f8fbff;
+        box-shadow: none;
+        overflow: hidden;
+        isolation: isolate;
+      }
+
+      .modal.modal-mobile .panel.is-collapsed {
+        padding-bottom: 10px;
+      }
+
+      .modal.modal-mobile .detail-header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .modal.modal-mobile .history-controls {
+        margin-left: auto;
+      }
+
+      .modal.modal-mobile .detail-link {
+        display: none;
+      }
+
+      .modal.modal-mobile .history-nav-panel .detail-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        row-gap: 6px;
+        align-items: center;
+      }
+
+      .modal.modal-mobile .history-nav-panel .history-controls {
+        grid-column: 1 / -1;
+        justify-self: end;
+      }
+
+      .modal.modal-mobile .time-toggle {
+        width: 100%;
+        order: 3;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .modal.modal-mobile .time-toggle .mini-btn {
+        width: 100%;
+        min-height: 40px;
+      }
+
+      #fund-modal.modal-mobile .detail-chart {
+        height: 240px;
+      }
+
+      #fund-modal.modal-mobile .nav-chart-panel .detail-chart {
+        min-height: 220px;
+        height: 220px;
+      }
+
+      #fund-modal.modal-mobile .nav-chart-panel .panel-footer {
+        margin-top: 0;
+      }
+
+      #fund-modal.modal-mobile .raw-html--positions,
+      #fund-modal.modal-mobile .raw-html--history {
+        max-height: 320px;
+        overflow: auto;
+        background: #ffffff;
+      }
+
+      #fund-modal.modal-mobile .history-table-wrap {
+        min-height: 180px;
+      }
+
+      .position-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .action-left,
+      .action-right {
+        width: 100%;
+      }
+
+      .action-left {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .action-left .btn {
+        padding: 8px 6px;
+        font-size: 12px;
+        white-space: normal;
+        line-height: 1.25;
+      }
+
+      .action-right {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .modal.modal-mobile .fund-status-panel,
+      .modal.modal-mobile .nav-chart-panel,
+      .modal.modal-mobile .history-nav-panel,
+      .modal.modal-mobile .positions-panel {
+        position: relative;
+      }
+
+      .submodal {
+        place-items: end center;
+      }
+
+      .submodal-card {
+        width: 100vw;
+        max-width: 100vw;
+        border-radius: 16px 16px 0 0;
+        padding: 12px 12px calc(14px + env(safe-area-inset-bottom));
+        max-height: 88dvh;
+        overflow: auto;
+        animation: sheetIn 200ms ease-out;
+      }
+
+      .batch-card,
+      .scan-card,
+      .scan-confirm-card,
+      .history-card {
+        width: 100vw;
+        max-width: 100vw;
+      }
+
+      .batch-card {
+        height: 88dvh;
+      }
+
+      .batch-layout {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .batch-preview {
+        max-height: 260px;
+      }
+
+      .scan-dropzone {
+        min-height: 120px;
+      }
+
+      @keyframes sheetIn {
+        from {
+          transform: translateY(18px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+    }
+
+    @media (min-width: 768px) and (max-width: 1023px) {
+      .page {
+        max-width: 100%;
+        padding: 16px 14px calc(20px + env(safe-area-inset-bottom));
+        gap: 18px;
+      }
+
+      .topbar {
+        padding: 12px;
+      }
+
+      .hero,
+      .section {
+        padding: 16px;
+      }
+
+      .fund-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .fund-treemap {
+        height: clamp(320px, 46vh, 460px);
+      }
+
+      .modal {
+        padding: 10px;
+      }
+
+      .modal-card {
+        width: 100%;
+        max-height: 94vh;
+      }
+
+      .modal-body {
+        grid-template-columns: 1fr;
+      }
     }

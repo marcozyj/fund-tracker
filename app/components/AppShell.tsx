@@ -150,6 +150,7 @@ function findNavFromHistoryTable(
 type TreemapItem = {
   code: string;
   holding: Holding;
+  name: string;
   weight: number;
   pct: number | null;
 };
@@ -160,6 +161,11 @@ type TreemapTile = {
   w: number;
   h: number;
   item: TreemapItem;
+};
+
+type MobileHeatmapLayout = {
+  tiles: TreemapTile[];
+  height: number;
 };
 
 function treemapWorst(row: Array<{ area: number }>, w: number) {
@@ -204,41 +210,133 @@ function treemapLayoutRow(
   };
 }
 
-function buildTreemap(items: TreemapItem[], width: number, height: number, maxRows = 3) {
+function buildTreemap(items: TreemapItem[], width: number, height: number, viewport: 'mobile' | 'tablet' | 'desktop') {
   if (!items.length || width <= 0 || height <= 0) return [];
   const sorted = [...items].sort((a, b) => b.weight - a.weight);
-  const rowCount = Math.max(1, Math.min(maxRows, sorted.length <= 4 ? 2 : maxRows));
-  const rowHeight = height / rowCount;
-  const rows = Array.from({ length: rowCount }, () => ({ items: [] as TreemapItem[], weight: 0 }));
 
+  let columnCount = 4;
+  if (viewport === 'mobile') {
+    if (sorted.length <= 4) columnCount = 2;
+    else if (sorted.length <= 8) columnCount = 3;
+    else if (sorted.length <= 14) columnCount = 4;
+    else columnCount = 5;
+  } else if (viewport === 'tablet') {
+    if (sorted.length <= 6) columnCount = 3;
+    else if (sorted.length <= 12) columnCount = 4;
+    else columnCount = 5;
+  } else {
+    if (sorted.length <= 8) columnCount = 4;
+    else if (sorted.length <= 16) columnCount = 5;
+    else columnCount = 6;
+  }
+
+  columnCount = Math.max(1, Math.min(columnCount, sorted.length));
+  const columns = Array.from({ length: columnCount }, () => ({ items: [] as TreemapItem[], weight: 0 }));
   sorted.forEach((item) => {
-    let target = rows[0];
-    rows.forEach((row) => {
-      if (row.weight < target.weight) target = row;
+    let target = columns[0];
+    columns.forEach((column) => {
+      if (column.weight < target.weight) target = column;
     });
     target.items.push(item);
-    target.weight += item.weight;
+    target.weight += Math.max(0.0001, item.weight);
   });
 
+  const minTileHeight = viewport === 'mobile' ? 56 : 44;
+  const colWidth = width / columnCount;
   const tiles: TreemapTile[] = [];
-  rows.forEach((row, rowIndex) => {
-    const totalWeight = row.weight > 0 ? row.weight : row.items.length;
-    let x = 0;
-    row.items.forEach((item, idx) => {
-      const ratio = totalWeight > 0 ? (item.weight / totalWeight) : 1 / row.items.length;
-      const w = idx === row.items.length - 1 ? width - x : width * ratio;
+
+  columns.forEach((column, colIndex) => {
+    if (!column.items.length) return;
+    const totalWeight = column.weight || column.items.length;
+    let heights = column.items.map((item) => (item.weight / totalWeight) * height);
+    const deficit = heights.reduce((sum, h) => sum + Math.max(0, minTileHeight - h), 0);
+    if (deficit > 0) {
+      const adjustableTotal = heights.reduce((sum, h) => sum + Math.max(0, h - minTileHeight), 0);
+      if (adjustableTotal > 0) {
+        heights = heights.map((h) => {
+          if (h <= minTileHeight) return minTileHeight;
+          const reducible = h - minTileHeight;
+          const reduceBy = (reducible / adjustableTotal) * deficit;
+          return Math.max(minTileHeight, h - reduceBy);
+        });
+      }
+    }
+
+    const sumHeight = heights.reduce((sum, h) => sum + h, 0);
+    if (sumHeight > 0) {
+      heights = heights.map((h) => (h / sumHeight) * height);
+    }
+
+    let y = 0;
+    column.items.forEach((item, idx) => {
+      const h = idx === column.items.length - 1 ? height - y : heights[idx];
       tiles.push({
-        x,
-        y: rowIndex * rowHeight,
-        w,
-        h: rowHeight,
+        x: colIndex * colWidth,
+        y,
+        w: colWidth,
+        h,
         item
       });
-      x += w;
+      y += h;
     });
   });
 
   return tiles;
+}
+
+function buildMobileHeatmap(items: TreemapItem[], width: number): MobileHeatmapLayout {
+  if (!items.length || width <= 0) return { tiles: [], height: 0 };
+  const sorted = [...items].sort((a, b) => b.weight - a.weight);
+  const columnCount = Math.max(2, Math.min(4, Math.floor(width / 122)));
+  const gap = 4;
+  const tileWidth = (width - gap * (columnCount - 1)) / columnCount;
+  const minWeight = Math.min(...sorted.map((item) => item.weight));
+  const maxWeight = Math.max(...sorted.map((item) => item.weight));
+  const weightSpan = maxWeight - minWeight || 1;
+  const columns = Array.from({ length: columnCount }, () => ({ height: 0, raw: [] as Array<{ item: TreemapItem; h: number }> }));
+
+  sorted.forEach((item) => {
+    const ratio = Math.max(0, Math.min(1, (item.weight - minWeight) / weightSpan));
+    const estimatedNameLen = item.name.length || 8;
+    const charsPerLine = Math.max(3, Math.floor((tileWidth - 14) / 12));
+    const estimatedLines = Math.max(2, Math.ceil(estimatedNameLen / charsPerLine));
+    const minReadableHeight = 18 + estimatedLines * 16 + 28;
+    const h = Math.round(Math.max(minReadableHeight, 96 + ratio * 88));
+
+    let target = columns[0];
+    columns.forEach((column) => {
+      if (column.height < target.height) target = column;
+    });
+    target.raw.push({ item, h });
+    target.height += h + gap;
+  });
+
+  const columnHeights = columns.map((column) => Math.max(0, column.height - gap));
+  const targetHeight = Math.max(...columnHeights, 0);
+  const tiles: TreemapTile[] = [];
+  let maxBottom = 0;
+
+  columns.forEach((column, colIndex) => {
+    if (!column.raw.length) return;
+    const baseHeight = Math.max(1, columnHeights[colIndex]);
+    const scale = targetHeight > 0 ? targetHeight / baseHeight : 1;
+    let y = 0;
+    column.raw.forEach((entry, idx) => {
+      const scaled = Math.max(1, Math.round(entry.h * scale));
+      const h = idx === column.raw.length - 1 ? Math.max(1, targetHeight - y) : scaled;
+      tiles.push({
+        x: colIndex * (tileWidth + gap),
+        y,
+        w: tileWidth,
+        h,
+        item: entry.item
+      });
+      y += h + gap;
+    });
+    maxBottom = Math.max(maxBottom, y - gap);
+  });
+
+  return { tiles, height: Math.max(300, maxBottom) };
 }
 
 function createOperationId() {
@@ -314,7 +412,6 @@ export default function AppShell() {
 
   const treemapTiles = useMemo(() => {
     if (!sortedHoldings.length || treemapSize.width <= 0 || treemapSize.height <= 0) return [];
-    const rowLimit = isMobileLayout ? 2 : isTabletLayout ? 3 : 4;
     const items: TreemapItem[] = sortedHoldings.map((holding) => {
       const view = computeHoldingView(holding, fundCache[holding.code]);
       const amount = view.amount ?? 0;
@@ -323,12 +420,33 @@ export default function AppShell() {
       return {
         code: holding.code,
         holding,
+        name: fundCache[holding.code]?.name || holding.code,
         weight,
         pct: pct === null || pct === undefined ? null : pct
       };
     });
-    return buildTreemap(items, treemapSize.width, treemapSize.height, rowLimit);
-  }, [sortedHoldings, fundCache, treemapSize, isMobileLayout, isTabletLayout]);
+    return buildTreemap(items, treemapSize.width, treemapSize.height, viewportMode);
+  }, [sortedHoldings, fundCache, treemapSize, viewportMode]);
+
+  const mobileHeatmap = useMemo<MobileHeatmapLayout>(() => {
+    if (!isMobileLayout || !sortedHoldings.length || treemapSize.width <= 0) {
+      return { tiles: [], height: 0 };
+    }
+    const items: TreemapItem[] = sortedHoldings.map((holding) => {
+      const view = computeHoldingView(holding, fundCache[holding.code]);
+      const amount = view.amount ?? 0;
+      const weight = Number.isFinite(amount) && amount > 0 ? amount : 1;
+      const pct = resolveDailyPct(fundCache[holding.code]);
+      return {
+        code: holding.code,
+        holding,
+        name: fundCache[holding.code]?.name || holding.code,
+        weight,
+        pct: pct === null || pct === undefined ? null : pct
+      };
+    });
+    return buildMobileHeatmap(items, treemapSize.width);
+  }, [isMobileLayout, sortedHoldings, fundCache, treemapSize.width]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchItem[]>([]);
@@ -2674,7 +2792,7 @@ export default function AppShell() {
   }
 
   return (
-    <div className="page">
+    <div className={`page ${isMobileLayout ? 'page-mobile' : ''} ${isTabletLayout ? 'page-tablet' : ''}`}>
       <header className="topbar reveal">
         <div className="brand">
           <div className="logo">稳</div>
@@ -2683,7 +2801,7 @@ export default function AppShell() {
             <span>基金辅助决策 · 认知辅助 + 行为约束</span>
           </div>
         </div>
-        <div className="topbar-actions">
+        <div className={`topbar-actions ${isMobileLayout ? 'topbar-actions-mobile' : ''}`}>
           <div className="search-box" id="search-box" ref={searchBoxRef}>
             <input
               id="search-input"
@@ -2878,9 +2996,14 @@ export default function AppShell() {
           </div>
         </div>
         {holdingViewMode === 'card' ? (
-          <div className="fund-treemap" id="fund-grid" ref={treemapRef}>
+          <div
+            className={`fund-treemap ${isMobileLayout ? 'fund-treemap-mobile' : ''}`}
+            id="fund-grid"
+            ref={treemapRef}
+            style={isMobileLayout && mobileHeatmap.height ? { height: `${mobileHeatmap.height}px` } : undefined}
+          >
             {!holdings.length && <div className="empty-state">还没有持仓基金，请从顶部搜索添加。</div>}
-            {treemapTiles.map((tile) => {
+            {(isMobileLayout ? mobileHeatmap.tiles : treemapTiles).map((tile) => {
               const pct = tile.item.pct;
               const pctClass =
                 pct === null || pct === undefined ? 'tile-flat' : pct >= 0 ? 'tile-up' : 'tile-down';
@@ -2895,7 +3018,9 @@ export default function AppShell() {
                 const light = 58 - absPct * 20;
                 tileColor = `hsl(145, 45%, ${light}%)`;
               }
-              const isTiny = tile.w * tile.h < 2600;
+              const minSide = Math.min(tile.w, tile.h);
+              const isTiny = tile.w * tile.h < 4200 || minSide < 92;
+              const isMicro = minSide < 58 || tile.w < 78 || tile.h < 52;
               return (
                 <FundCard
                   key={tile.item.code}
@@ -2903,7 +3028,7 @@ export default function AppShell() {
                   code={tile.item.code}
                   data={fundCache[tile.item.code]}
                   holding={tile.item.holding}
-                  className={`fund-card--tile ${pctClass} ${isTiny ? 'tile--tiny' : ''}`}
+                  className={`fund-card--tile ${pctClass} ${isTiny ? 'tile--tiny' : ''} ${isMicro ? 'tile--micro' : ''} ${isMobileLayout ? 'tile--mobile' : ''}`}
                   style={{
                     left: `${tile.x}px`,
                     top: `${tile.y}px`,
@@ -2931,7 +3056,10 @@ export default function AppShell() {
                   <span>持有收益</span>
                 </div>
                 <div className="fund-row-metric">
-                  <span>当日收益</span>
+                  <span>当日预估收益</span>
+                </div>
+                <div className="fund-row-metric">
+                  <span>今日涨跌</span>
                 </div>
               </div>
             )}
@@ -2979,7 +3107,9 @@ export default function AppShell() {
                   </div>
                   <div className="fund-row-metric">
                     <strong className={dailyClass}>{formatMoney(dailyProfit)}</strong>
-                    <em className={`fund-row-sub ${dailyRateClass}`}>{formatPct(dailyPct ?? null)}</em>
+                  </div>
+                  <div className="fund-row-metric">
+                    <strong className={dailyRateClass}>{formatPct(dailyPct ?? null)}</strong>
                   </div>
                 </div>
               );

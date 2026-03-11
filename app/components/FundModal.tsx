@@ -20,6 +20,13 @@ import { computeHoldingView, resolveDailyPct } from '../../lib/metrics';
 import { getStockQuotesClient } from '../../lib/client-fund';
 import Chart from './Chart';
 
+const MOBILE_DETAIL_SECTION_KEY = 'mobile_detail_section_state';
+const DEFAULT_MOBILE_SECTIONS = {
+  chart: true,
+  history: false,
+  positions: false
+};
+
 export default function FundModal({
   open,
   onClose,
@@ -246,6 +253,60 @@ export default function FundModal({
     return (amount * (rate / 100)).toFixed(2);
   }, [buyForm.amount, buyForm.feeRate]);
 
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileSections, setMobileSections] = useState(DEFAULT_MOBILE_SECTIONS);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const query = window.matchMedia('(max-width: 767px)');
+    const update = () => setIsMobile(query.matches);
+    update();
+    if (query.addEventListener) query.addEventListener('change', update);
+    else query.addListener(update);
+    return () => {
+      if (query.removeEventListener) query.removeEventListener('change', update);
+      else query.removeListener(update);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open || !isMobile || typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(MOBILE_DETAIL_SECTION_KEY);
+      if (!raw) {
+        setMobileSections(DEFAULT_MOBILE_SECTIONS);
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<typeof DEFAULT_MOBILE_SECTIONS>;
+      setMobileSections({
+        chart: parsed.chart ?? DEFAULT_MOBILE_SECTIONS.chart,
+        history: parsed.history ?? DEFAULT_MOBILE_SECTIONS.history,
+        positions: parsed.positions ?? DEFAULT_MOBILE_SECTIONS.positions
+      });
+    } catch {
+      setMobileSections(DEFAULT_MOBILE_SECTIONS);
+    }
+  }, [open, isMobile]);
+
+  useEffect(() => {
+    if (!isMobile || typeof window === 'undefined') return;
+    window.localStorage.setItem(MOBILE_DETAIL_SECTION_KEY, JSON.stringify(mobileSections));
+  }, [mobileSections, isMobile]);
+
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return;
+    const body = document.body;
+    const root = document.documentElement;
+    const prevBodyOverflow = body.style.overflow;
+    const prevRootOverflow = root.style.overflow;
+    body.style.overflow = 'hidden';
+    root.style.overflow = 'hidden';
+    return () => {
+      body.style.overflow = prevBodyOverflow;
+      root.style.overflow = prevRootOverflow;
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     setBuyForm((prev) => ({
@@ -368,6 +429,10 @@ export default function FundModal({
   const operationTitleClass = (op: FundOperation) =>
     op.type === 'add' ? 'op-add' : op.type === 'reduce' ? 'op-reduce' : '';
 
+  const toggleMobileSection = (key: keyof typeof DEFAULT_MOBILE_SECTIONS) => {
+    setMobileSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const operationMeta = (op: FundOperation) => {
     const parts: { text: string; className?: string }[] = [];
       if (op.type === 'add' || op.type === 'reduce') {
@@ -455,9 +520,9 @@ export default function FundModal({
   if (!open) return null;
 
   return (
-    <div className="modal show" id="fund-modal" aria-hidden={!open}>
+    <div className={`modal show ${isMobile ? 'modal-mobile' : ''}`} id="fund-modal" aria-hidden={!open}>
       <div className="modal-backdrop" onClick={onClose} />
-      <div className="modal-card">
+      <div className={`modal-card ${isMobile ? 'modal-card-mobile' : ''}`}>
         <div className="modal-header">
           <div>
             <h3 id="modal-title">{data?.name || '基金详情'}</h3>
@@ -645,188 +710,225 @@ export default function FundModal({
             </div>
             <div className="helper" id="modal-hint"></div>
             </div>
-            <div className="panel nav-chart-panel">
+            <div className={`panel nav-chart-panel ${isMobile && !mobileSections.chart ? 'is-collapsed' : ''}`}>
               <div className="detail-header">
                 <h4>净值走势</h4>
-                <div className="time-toggle" id="chart-range">
-                  <button
-                    className={`mini-btn ${chartRange === '1y' ? 'active' : ''}`}
-                    data-range="1y"
-                    onClick={() => onChartRangeChange('1y')}
-                  >
-                    一年
+                {isMobile && (
+                  <button className="mini-btn mini-btn--wide" type="button" onClick={() => toggleMobileSection('chart')}>
+                    {mobileSections.chart ? '收起' : '展开'}
                   </button>
-                  <button
-                    className={`mini-btn ${chartRange === '6m' ? 'active' : ''}`}
-                    data-range="6m"
-                    onClick={() => onChartRangeChange('6m')}
-                  >
-                    半年
-                  </button>
-                  <button
-                    className={`mini-btn ${chartRange === '1m' ? 'active' : ''}`}
-                    data-range="1m"
-                    onClick={() => onChartRangeChange('1m')}
-                  >
-                    一个月
-                  </button>
-                </div>
+                )}
+                {(!isMobile || mobileSections.chart) && (
+                  <div className="time-toggle" id="chart-range">
+                    <button
+                      className={`mini-btn ${chartRange === '1y' ? 'active' : ''}`}
+                      data-range="1y"
+                      onClick={() => onChartRangeChange('1y')}
+                    >
+                      一年
+                    </button>
+                    <button
+                      className={`mini-btn ${chartRange === '6m' ? 'active' : ''}`}
+                      data-range="6m"
+                      onClick={() => onChartRangeChange('6m')}
+                    >
+                      半年
+                    </button>
+                    <button
+                      className={`mini-btn ${chartRange === '1m' ? 'active' : ''}`}
+                      data-range="1m"
+                      onClick={() => onChartRangeChange('1m')}
+                    >
+                      一个月
+                    </button>
+                  </div>
+                )}
               </div>
-              <Chart history={data?.history || []} range={chartRange} markers={chartMarkers} />
-              <div className="helper panel-footer" id="modal-note">
-                {data?.updateTime ? `数据更新：${data.updateTime} · 仅供参考` : '数据更新中'}
-              </div>
+              {(!isMobile || mobileSections.chart) && (
+                <>
+                  <Chart history={data?.history || []} range={chartRange} markers={chartMarkers} />
+                  <div className="helper panel-footer" id="modal-note">
+                    {data?.updateTime ? `数据更新：${data.updateTime} · 仅供参考` : '数据更新中'}
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <div className="modal-column modal-side">
-            <div className="panel history-panel">
+            <div className={`panel positions-panel ${isMobile && !mobileSections.positions ? 'is-collapsed' : ''}`}>
               <div className="detail-header">
                 <h4>基金持仓</h4>
                 {positionTitle ? <span className="detail-link">{positionTitle}</span> : null}
+                {isMobile && (
+                  <button
+                    className="mini-btn mini-btn--wide"
+                    type="button"
+                    onClick={() => toggleMobileSection('positions')}
+                  >
+                    {mobileSections.positions ? '收起' : '展开'}
+                  </button>
+                )}
               </div>
-              {positionDate ? (
-                <div className="detail-note">
-                  截止至：{positionDate}
-                  {positions?.source ? ` · 来源：${positions.source}` : ''}
-                </div>
-              ) : null}
-              {holdingsList.length ? (
-                <div className="raw-html raw-html--positions">
-                  <table className="positions-table">
-                    <thead>
-                      <tr>
-                        <th>股票代码</th>
-                        <th>股票名称</th>
-                        <th>涨跌幅</th>
-                        <th>占净值比例</th>
-                        <th>变动</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {holdingsList.map((item) => {
-                        const quoteKey = (
-                          item.code ||
-                          (item.secid ? item.secid.split('.').pop() : '') ||
-                          ''
-                        ).toUpperCase();
-                        const quote = quoteKey ? positions?.quotes?.[quoteKey] : undefined;
-                        const pct = quote?.pct ?? null;
-                        const displayCode =
-                          item.code ||
-                          (item.secid ? item.secid.split('.').pop() : '') ||
-                          quote?.code ||
-                          '--';
-                        return (
-                          <tr key={`${item.code}-${item.name}`}>
-                            <td>{displayCode}</td>
-                            <td>{item.name || '--'}</td>
-                            <td className={pct === null ? '' : pct > 0 ? 'market-up' : pct < 0 ? 'market-down' : 'market-flat'}>
-                              {pct === null ? '--' : `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`}
-                            </td>
-                            <td>{item.weight !== null && item.weight !== undefined ? `${item.weight.toFixed(2)}%` : '--'}</td>
-                            <td
-                              className={
-                                item.change === null || item.change === undefined
-                                  ? ''
-                                  : item.change > 0
-                                    ? 'market-up'
-                                    : item.change < 0
-                                      ? 'market-down'
-                                      : 'market-flat'
-                              }
-                            >
-                              {item.changeType === '新增'
-                                ? '新增'
-                                : item.change !== null && item.change !== undefined
-                                  ? `${item.change > 0 ? '+' : ''}${item.change.toFixed(2)}%`
-                                  : '--'}
-                            </td>
+              {(!isMobile || mobileSections.positions) && (
+                <>
+                  {positionDate ? (
+                    <div className="detail-note">
+                      截止至：{positionDate}
+                      {positions?.source ? ` · 来源：${positions.source}` : ''}
+                    </div>
+                  ) : null}
+                  {holdingsList.length ? (
+                    <div className="raw-html raw-html--positions">
+                      <table className="positions-table">
+                        <thead>
+                          <tr>
+                            <th>股票代码</th>
+                            <th>股票名称</th>
+                            <th>涨跌幅</th>
+                            <th>占净值比例</th>
+                            <th>变动</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : positionsHtml ? (
-                <div
-                  className="raw-html raw-html--positions"
-                  ref={positionRef}
-                  dangerouslySetInnerHTML={positionsMarkup}
-                />
-              ) : (
-                <div className="empty-state">{extrasLoading ? '正在拉取数据...' : '暂无持仓数据'}</div>
+                        </thead>
+                        <tbody>
+                          {holdingsList.map((item) => {
+                            const quoteKey = (
+                              item.code ||
+                              (item.secid ? item.secid.split('.').pop() : '') ||
+                              ''
+                            ).toUpperCase();
+                            const quote = quoteKey ? positions?.quotes?.[quoteKey] : undefined;
+                            const pct = quote?.pct ?? null;
+                            const displayCode =
+                              item.code ||
+                              (item.secid ? item.secid.split('.').pop() : '') ||
+                              quote?.code ||
+                              '--';
+                            return (
+                              <tr key={`${item.code}-${item.name}`}>
+                                <td>{displayCode}</td>
+                                <td>{item.name || '--'}</td>
+                                <td className={pct === null ? '' : pct > 0 ? 'market-up' : pct < 0 ? 'market-down' : 'market-flat'}>
+                                  {pct === null ? '--' : `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`}
+                                </td>
+                                <td>{item.weight !== null && item.weight !== undefined ? `${item.weight.toFixed(2)}%` : '--'}</td>
+                                <td
+                                  className={
+                                    item.change === null || item.change === undefined
+                                      ? ''
+                                      : item.change > 0
+                                        ? 'market-up'
+                                        : item.change < 0
+                                          ? 'market-down'
+                                          : 'market-flat'
+                                  }
+                                >
+                                  {item.changeType === '新增'
+                                    ? '新增'
+                                    : item.change !== null && item.change !== undefined
+                                      ? `${item.change > 0 ? '+' : ''}${item.change.toFixed(2)}%`
+                                      : '--'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : positionsHtml ? (
+                    <div
+                      className="raw-html raw-html--positions"
+                      ref={positionRef}
+                      dangerouslySetInnerHTML={positionsMarkup}
+                    />
+                  ) : (
+                    <div className="empty-state">{extrasLoading ? '正在拉取数据...' : '暂无持仓数据'}</div>
+                  )}
+                </>
               )}
             </div>
-          <div className="panel">
+          <div className={`panel history-nav-panel ${isMobile && !mobileSections.history ? 'is-collapsed' : ''}`}>
             <div className="detail-header">
               <h4>历史净值</h4>
-              <div className="history-controls">
+              {isMobile && (
                 <button
-                  className="icon-btn"
+                  className="mini-btn mini-btn--wide"
                   type="button"
-                  aria-label="上一页"
-                  disabled={historyPage <= 1}
-                  onClick={() => onHistoryPageChange(Math.max(1, historyPage - 1))}
+                  onClick={() => toggleMobileSection('history')}
                 >
-                  ◀
+                  {mobileSections.history ? '收起' : '展开'}
                 </button>
-                <span className="badge">
-                  第 {historyTable?.currentPage || historyPage} / {historyPages} 页
-                </span>
-                <button
-                  className="icon-btn"
-                  type="button"
-                  aria-label="下一页"
-                  disabled={historyPage >= historyPages}
-                  onClick={() => onHistoryPageChange(Math.min(historyPages, historyPage + 1))}
-                >
-                  ▶
-                </button>
-              </div>
+              )}
+              {(!isMobile || mobileSections.history) && (
+                <div className="history-controls">
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    aria-label="上一页"
+                    disabled={historyPage <= 1}
+                    onClick={() => onHistoryPageChange(Math.max(1, historyPage - 1))}
+                  >
+                    ◀
+                  </button>
+                  <span className="badge">
+                    第 {historyTable?.currentPage || historyPage} / {historyPages} 页
+                  </span>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    aria-label="下一页"
+                    disabled={historyPage >= historyPages}
+                    onClick={() => onHistoryPageChange(Math.min(historyPages, historyPage + 1))}
+                  >
+                    ▶
+                  </button>
+                </div>
+              )}
             </div>
-            {historyTable?.content ? (
-              <div className="history-table-wrap">
-                <div className="history-table-head">
-                  <table className="history-table">
-                    <colgroup>
-                      <col style={{ width: '16%' }} />
-                      <col style={{ width: '14%' }} />
-                      <col style={{ width: '14%' }} />
-                      <col style={{ width: '12%' }} />
-                      <col style={{ width: '16%' }} />
-                      <col style={{ width: '14%' }} />
-                      <col style={{ width: '14%' }} />
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        <th>净值日期</th>
-                        <th>单位净值</th>
-                        <th>累计净值</th>
-                      <th>日涨跌</th>
-                        <th>申购状态</th>
-                        <th>赎回状态</th>
-                        <th>分红送配</th>
-                      </tr>
-                    </thead>
-                  </table>
+            {(!isMobile || mobileSections.history) && (
+              historyTable?.content ? (
+                <div className="history-table-wrap">
+                  <div className="history-table-head">
+                    <table className="history-table">
+                      <colgroup>
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '14%' }} />
+                        <col style={{ width: '14%' }} />
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '14%' }} />
+                        <col style={{ width: '14%' }} />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th>净值日期</th>
+                          <th>单位净值</th>
+                          <th>累计净值</th>
+                          <th>日涨跌</th>
+                          <th>申购状态</th>
+                          <th>赎回状态</th>
+                          <th>分红送配</th>
+                        </tr>
+                      </thead>
+                    </table>
+                  </div>
+                  <div className="raw-html raw-html--history">
+                    <table className="history-table">
+                      <colgroup>
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '14%' }} />
+                        <col style={{ width: '14%' }} />
+                        <col style={{ width: '12%' }} />
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '14%' }} />
+                        <col style={{ width: '14%' }} />
+                      </colgroup>
+                      <tbody dangerouslySetInnerHTML={{ __html: coloredHistoryRows }} />
+                    </table>
+                  </div>
                 </div>
-                <div className="raw-html raw-html--history">
-                  <table className="history-table">
-                    <colgroup>
-                      <col style={{ width: '16%' }} />
-                      <col style={{ width: '14%' }} />
-                      <col style={{ width: '14%' }} />
-                      <col style={{ width: '12%' }} />
-                      <col style={{ width: '16%' }} />
-                      <col style={{ width: '14%' }} />
-                      <col style={{ width: '14%' }} />
-                    </colgroup>
-                    <tbody dangerouslySetInnerHTML={{ __html: coloredHistoryRows }} />
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className="empty-state">{extrasLoading ? '正在拉取数据...' : '暂无历史净值数据'}</div>
+              ) : (
+                <div className="empty-state">{extrasLoading ? '正在拉取数据...' : '暂无历史净值数据'}</div>
+              )
             )}
           </div>
           </div>
