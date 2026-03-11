@@ -7,7 +7,7 @@ async function getWorker() {
     const Tesseract = await import('tesseract.js');
     const worker = await Tesseract.createWorker('chi_sim+eng');
     await worker.setParameters({
-      tessedit_pageseg_mode: '6',
+      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
       preserve_interword_spaces: '1'
     });
     workerInstance = worker;

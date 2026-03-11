@@ -1558,12 +1558,18 @@ export default function AppShell() {
 
       const existingCodes = new Set([...holdings.map((h) => h.code)]);
       const results: Array<{ code: string; name: string; status: 'ok' | 'added' | 'invalid'; amount: number; profit: number }> = [
-        ...Array.from(mergedHoldings.entries()).map(([code, value]) => ({
+        ...Array.from(mergedHoldings.entries()).map<{
+          code: string;
+          name: string;
+          status: 'ok' | 'added';
+          amount: number;
+          profit: number;
+        }>(([code, value]) => ({
           code,
           name: value.name,
           amount: value.amount,
           profit: value.profit,
-          status: existingCodes.has(code) ? 'added' : 'ok'
+          status: existingCodes.has(code) ? ('added' as const) : ('ok' as const)
         })),
         ...unresolved
       ];
