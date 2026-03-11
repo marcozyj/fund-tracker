@@ -2828,6 +2828,10 @@
       overflow-x: hidden;
     }
 
+    body.modal-open {
+      overscroll-behavior: none;
+    }
+
     .page,
     .section,
     .modal-card,
@@ -3072,6 +3076,8 @@
       .modal.modal-mobile {
         padding: 0;
         align-items: flex-end;
+        touch-action: none;
+        overscroll-behavior: contain;
       }
 
       .modal.modal-mobile .modal-card {
@@ -3083,6 +3089,10 @@
         padding: 10px 10px calc(14px + env(safe-area-inset-bottom));
         background: #e7ecf4;
         animation: sheetIn 220ms ease-out;
+        display: flex;
+        flex-direction: column;
+        touch-action: pan-y;
+        overscroll-behavior: contain;
       }
 
       .modal.modal-mobile .modal-header {
@@ -3107,44 +3117,44 @@
       }
 
       .modal.modal-mobile .modal-body {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
+        display: flex;
+        flex-direction: column;
         gap: 12px;
         overflow-y: auto;
         max-height: none;
+        min-height: 0;
+        height: 100%;
+        flex: 1 1 auto;
         padding-right: 0;
         overscroll-behavior: contain;
         -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
       }
 
       .modal.modal-mobile .modal-column {
-        display: grid;
+        display: flex;
+        flex-direction: column;
         gap: 10px;
-        grid-template-rows: auto;
+        min-height: 0;
+        flex: 0 0 auto;
       }
 
       .modal.modal-mobile .modal-main {
         order: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
 
       .modal.modal-mobile .modal-side {
         order: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
 
       .modal.modal-mobile .fund-status-panel {
-        order: 1;
-      }
-
-      .modal.modal-mobile .nav-chart-panel {
-        order: 2;
-      }
-
-      .modal.modal-mobile .history-nav-panel {
-        order: 1;
-      }
-
-      .modal.modal-mobile .positions-panel {
-        order: 2;
+        overflow: visible;
       }
 
       .modal.modal-mobile .panel {
@@ -3152,12 +3162,19 @@
         border-radius: 14px;
         background: #f8fbff;
         box-shadow: none;
-        overflow: hidden;
+        overflow: visible;
         isolation: isolate;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
 
       .modal.modal-mobile .panel.is-collapsed {
         padding-bottom: 10px;
+      }
+
+      .modal.modal-mobile .panel.is-collapsed > :not(.detail-header) {
+        display: none !important;
       }
 
       .modal.modal-mobile .detail-header {
@@ -3187,6 +3204,20 @@
         justify-self: end;
       }
 
+      .modal.modal-mobile .modal-actions {
+        margin-top: 8px;
+        overflow: visible;
+      }
+
+      .modal.modal-mobile .holding-layout {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .modal.modal-mobile .holding-sub-row {
+        gap: 10px;
+      }
+
       .modal.modal-mobile .time-toggle {
         width: 100%;
         order: 3;
@@ -3200,13 +3231,20 @@
         min-height: 40px;
       }
 
+      .modal.modal-mobile .nav-chart-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
       #fund-modal.modal-mobile .detail-chart {
         height: 240px;
       }
 
       #fund-modal.modal-mobile .nav-chart-panel .detail-chart {
-        min-height: 220px;
-        height: 220px;
+        min-height: 260px;
+        height: 260px;
+        flex: 0 0 auto;
       }
 
       #fund-modal.modal-mobile .nav-chart-panel .panel-footer {
@@ -3215,9 +3253,12 @@
 
       #fund-modal.modal-mobile .raw-html--positions,
       #fund-modal.modal-mobile .raw-html--history {
-        max-height: 320px;
+        max-height: 42dvh;
         overflow: auto;
         background: #ffffff;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
+        overscroll-behavior: contain;
       }
 
       #fund-modal.modal-mobile .history-table-wrap {
@@ -3259,6 +3300,22 @@
       .modal.modal-mobile .history-nav-panel,
       .modal.modal-mobile .positions-panel {
         position: relative;
+      }
+
+      .modal.modal-mobile .fund-status-panel {
+        order: 1;
+      }
+
+      .modal.modal-mobile .nav-chart-panel {
+        order: 2;
+      }
+
+      .modal.modal-mobile .history-nav-panel {
+        order: 1;
+      }
+
+      .modal.modal-mobile .positions-panel {
+        order: 2;
       }
 
       .submodal {

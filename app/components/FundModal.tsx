@@ -20,11 +20,11 @@ import { computeHoldingView, resolveDailyPct } from '../../lib/metrics';
 import { getStockQuotesClient } from '../../lib/client-fund';
 import Chart from './Chart';
 
-const MOBILE_DETAIL_SECTION_KEY = 'mobile_detail_section_state';
+const MOBILE_DETAIL_SECTION_KEY = 'mobile_detail_section_state_v2';
 const DEFAULT_MOBILE_SECTIONS = {
   chart: true,
-  history: false,
-  positions: false
+  history: true,
+  positions: true
 };
 
 export default function FundModal({
@@ -137,6 +137,7 @@ export default function FundModal({
   const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
   const [batchEdits, setBatchEdits] = useState<Record<string, { amount: string; shares: string }>>({});
   const [batchError, setBatchError] = useState('');
+  const lockScrollYRef = useRef(0);
   const [buyForm, setBuyForm] = useState({
     amount: '',
     feeRate: '',
@@ -295,17 +296,47 @@ export default function FundModal({
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') return;
+    const canUseWindow = typeof window !== 'undefined';
     const body = document.body;
     const root = document.documentElement;
+    const prevBodyPosition = body.style.position;
+    const prevBodyTop = body.style.top;
+    const prevBodyLeft = body.style.left;
+    const prevBodyRight = body.style.right;
+    const prevBodyWidth = body.style.width;
+    const prevBodyTouchAction = body.style.touchAction;
     const prevBodyOverflow = body.style.overflow;
+    const prevRootTouchAction = root.style.touchAction;
     const prevRootOverflow = root.style.overflow;
+    if (canUseWindow && isMobile) {
+      lockScrollYRef.current = window.scrollY || window.pageYOffset || 0;
+      body.style.position = 'fixed';
+      body.style.top = `-${lockScrollYRef.current}px`;
+      body.style.left = '0';
+      body.style.right = '0';
+      body.style.width = '100%';
+      body.classList.add('modal-open');
+    }
+    body.style.touchAction = 'none';
     body.style.overflow = 'hidden';
+    root.style.touchAction = 'none';
     root.style.overflow = 'hidden';
     return () => {
+      body.classList.remove('modal-open');
+      body.style.position = prevBodyPosition;
+      body.style.top = prevBodyTop;
+      body.style.left = prevBodyLeft;
+      body.style.right = prevBodyRight;
+      body.style.width = prevBodyWidth;
+      body.style.touchAction = prevBodyTouchAction;
       body.style.overflow = prevBodyOverflow;
+      root.style.touchAction = prevRootTouchAction;
       root.style.overflow = prevRootOverflow;
+      if (canUseWindow && isMobile) {
+        window.scrollTo(0, lockScrollYRef.current);
+      }
     };
-  }, [open]);
+  }, [open, isMobile]);
 
   useEffect(() => {
     if (!open) return;
