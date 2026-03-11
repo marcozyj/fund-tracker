@@ -3060,10 +3060,7 @@ export default function AppShell() {
                   <span>持有收益</span>
                 </div>
                 <div className="fund-row-metric">
-                  <span>当日预估收益</span>
-                </div>
-                <div className="fund-row-metric">
-                  <span>今日涨跌</span>
+                  <span>今日收益</span>
                 </div>
               </div>
             )}
@@ -3111,9 +3108,7 @@ export default function AppShell() {
                   </div>
                   <div className="fund-row-metric">
                     <strong className={dailyClass}>{formatMoney(dailyProfit)}</strong>
-                  </div>
-                  <div className="fund-row-metric">
-                    <strong className={dailyRateClass}>{formatPct(dailyPct ?? null)}</strong>
+                    <em className={`fund-row-sub ${dailyRateClass}`}>{formatPct(dailyPct ?? null)}</em>
                   </div>
                 </div>
               );

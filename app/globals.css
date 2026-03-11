@@ -462,7 +462,7 @@
 
     .fund-row {
       display: grid;
-      grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1.7fr) repeat(3, minmax(0, 1fr));
       gap: 12px;
       align-items: center;
       padding: 14px 16px;
@@ -3044,7 +3044,7 @@
 
       .fund-row {
         min-width: 0;
-        grid-template-columns: minmax(0, 1.5fr) repeat(4, minmax(0, 0.95fr));
+        grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 0.95fr));
         gap: 6px;
         padding: 8px;
       }
