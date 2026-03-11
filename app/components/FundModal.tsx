@@ -20,11 +20,11 @@ import { computeHoldingView, resolveDailyPct } from '../../lib/metrics';
 import { getStockQuotesClient } from '../../lib/client-fund';
 import Chart from './Chart';
 
-const MOBILE_DETAIL_SECTION_KEY = 'mobile_detail_section_state_v2';
+const MOBILE_DETAIL_SECTION_KEY = 'mobile_detail_section_state_v3';
 const DEFAULT_MOBILE_SECTIONS = {
   chart: true,
-  history: true,
-  positions: true
+  history: false,
+  positions: false
 };
 
 export default function FundModal({

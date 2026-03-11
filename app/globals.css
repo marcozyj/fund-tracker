@@ -797,7 +797,13 @@
     }
 
     .fund-card--tile.tile--tiny .fund-tile-name {
-      display: none;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: clamp(10px, 0.9vw, 12px);
+      line-height: 1.15;
     }
 
     .fund-card--tile.tile--tiny .fund-tile-pct {
@@ -810,7 +816,11 @@
     }
 
     .fund-card--tile.tile--micro .fund-tile-name {
-      display: block;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+      text-overflow: ellipsis;
       font-size: 10px;
       line-height: 1.15;
     }
@@ -2860,7 +2870,11 @@
 
       .brand {
         width: 100%;
-        justify-content: space-between;
+        justify-content: flex-start;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
       }
 
       .brand-title h1 {
@@ -2874,9 +2888,9 @@
       .topbar-actions {
         width: 100%;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
-        align-items: center;
+        align-items: stretch;
       }
 
       .search-box {
@@ -2893,18 +2907,20 @@
         font-size: 14px;
       }
 
-      .pill {
+      .topbar-time {
         grid-column: 1 / 2;
         width: 100%;
-        justify-content: center;
+        justify-content: flex-start;
         min-height: 44px;
       }
 
-      .refresh-select {
+      .topbar-refresh-select {
         grid-column: 2 / 3;
+        width: 100%;
       }
 
-      .refresh-select select {
+      .topbar-refresh-select select {
+        width: 100%;
         min-height: 44px;
         font-size: 12px;
         padding: 8px 10px;
@@ -2913,10 +2929,19 @@
       .topbar-actions .btn {
         min-height: 44px;
         padding: 10px 12px;
+        width: 100%;
       }
 
       .loading-indicator {
         grid-column: 1 / -1;
+      }
+
+      .topbar-export-btn {
+        grid-column: 1 / 2;
+      }
+
+      .topbar-import-btn {
+        grid-column: 2 / 3;
       }
 
       .hero {
@@ -2989,15 +3014,22 @@
         border-color: rgba(15, 23, 42, 0.12);
         border-width: 1px;
         border-radius: 8px;
+        padding: 6px 5px;
+        gap: 4px;
       }
 
       .fund-treemap-mobile .fund-tile-name {
-        font-size: 12px;
-        line-height: 1.2;
+        font-size: 11px;
+        line-height: 1.15;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .fund-treemap-mobile .fund-tile-pct {
-        font-size: 11px;
+        font-size: 10px;
       }
 
       .fund-list {

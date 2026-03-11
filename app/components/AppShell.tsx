@@ -287,8 +287,12 @@ function buildTreemap(items: TreemapItem[], width: number, height: number, viewp
 function buildMobileHeatmap(items: TreemapItem[], width: number): MobileHeatmapLayout {
   if (!items.length || width <= 0) return { tiles: [], height: 0 };
   const sorted = [...items].sort((a, b) => b.weight - a.weight);
-  const columnCount = Math.max(2, Math.min(4, Math.floor(width / 122)));
-  const gap = 4;
+  let columnCount = width >= 390 ? 4 : 3;
+  if (sorted.length <= 4) columnCount = Math.min(3, sorted.length);
+  if (sorted.length >= 10 && width >= 360) columnCount = 4;
+  columnCount = Math.max(1, Math.min(4, Math.min(columnCount, sorted.length)));
+
+  const gap = width >= 390 ? 3 : 4;
   const tileWidth = (width - gap * (columnCount - 1)) / columnCount;
   const minWeight = Math.min(...sorted.map((item) => item.weight));
   const maxWeight = Math.max(...sorted.map((item) => item.weight));
@@ -298,10 +302,10 @@ function buildMobileHeatmap(items: TreemapItem[], width: number): MobileHeatmapL
   sorted.forEach((item) => {
     const ratio = Math.max(0, Math.min(1, (item.weight - minWeight) / weightSpan));
     const estimatedNameLen = item.name.length || 8;
-    const charsPerLine = Math.max(3, Math.floor((tileWidth - 14) / 12));
+    const charsPerLine = Math.max(3, Math.floor((tileWidth - 10) / 10));
     const estimatedLines = Math.max(2, Math.ceil(estimatedNameLen / charsPerLine));
-    const minReadableHeight = 18 + estimatedLines * 16 + 28;
-    const h = Math.round(Math.max(minReadableHeight, 96 + ratio * 88));
+    const minReadableHeight = 14 + estimatedLines * 13 + 22;
+    const h = Math.round(Math.max(minReadableHeight, 72 + ratio * 60));
 
     let target = columns[0];
     columns.forEach((column) => {
@@ -336,7 +340,7 @@ function buildMobileHeatmap(items: TreemapItem[], width: number): MobileHeatmapL
     maxBottom = Math.max(maxBottom, y - gap);
   });
 
-  return { tiles, height: Math.max(300, maxBottom) };
+  return { tiles, height: Math.max(240, maxBottom) };
 }
 
 function createOperationId() {
@@ -2843,7 +2847,7 @@ export default function AppShell() {
               })}
             </div>
           </div>
-          <div className="pill">
+          <div className="pill topbar-time">
             刷新时间 <strong id="refresh-time">{refreshTime}</strong>
           </div>
           {loading && (
@@ -2851,7 +2855,7 @@ export default function AppShell() {
               <span className="dot"></span> 数据拉取中
             </div>
           )}
-          <div className="refresh-select">
+          <div className="refresh-select topbar-refresh-select">
             <select
               aria-label="自动刷新频率"
               value={refreshInterval}
@@ -2869,10 +2873,10 @@ export default function AppShell() {
               ))}
             </select>
           </div>
-          <button className="btn secondary" type="button" onClick={handleExport}>
+          <button className="btn secondary topbar-export-btn" type="button" onClick={handleExport}>
             导出
           </button>
-          <button className="btn" type="button" onClick={handleImportClick}>
+          <button className="btn topbar-import-btn" type="button" onClick={handleImportClick}>
             导入
           </button>
           <input
